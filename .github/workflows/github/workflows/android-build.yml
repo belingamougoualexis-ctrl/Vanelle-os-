@@ -26,30 +26,35 @@ jobs:
       run: |
         unzip -o *.zip -d dossier_decompresse
 
-    - name: Nettoyer les fichiers non supportés dans res/
+    - name: Nettoyer les fichiers non-images dans res/
       run: |
+        # Supprime les fichiers texte/invalides dans les dossiers de ressources res/
         find dossier_decompresse -type f -path "*/src/main/res/*" ! -name "*.xml" ! -name "*.png" ! -name "*.jpg" ! -name "*.webp" ! -name "*.gif" -delete || true
 
-    - name: Activer AndroidX partout
+    - name: Activer AndroidX au niveau global
       run: |
-        # Force la création de gradle.properties dans le home Gradle et dans les dossiers du projet
         mkdir -p ~/.gradle
         echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
         echo "android.enableJetifier=true" >> ~/.gradle/gradle.properties
 
-        # Ajoute également dans tous les sous-dossiers trouvés
-        find . -type d -exec touch {}/gradle.properties \;
-        find . -name "gradle.properties" -exec sh -c 'echo "android.useAndroidX=true" >> "$1"' _ {} \;
-        find . -name "gradle.properties" -exec sh -c 'echo "android.enableJetifier=true" >> "$1"' _ {} \;
+        # Ajoute également dans le dossier du projet trouvé
+        PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
+        echo "android.useAndroidX=true" >> "$PROJ_DIR/gradle.properties"
+        echo "android.enableJetifier=true" >> "$PROJ_DIR/gradle.properties"
 
     - name: Compiler l'APK
       run: |
         PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
         cd "$PROJ_DIR"
-        gradle assembleDebug --stacktrace
+        if [ -f "./gradlew" ]; then
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
+        else
+          gradle assembleDebug --stacktrace
+        fi
 
     - name: Récupérer l'APK
-      uses: uses/upload-artifact@v4
+      uses: actions/upload-artifact@v4
       with:
         name: VanelleOS-APK
         path: "**/*.apk"
