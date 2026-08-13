@@ -12,18 +12,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Récupération du code
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 2. Configuration de JDK 17
       - name: Configuration de JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Décompression de l'archive ZIP
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -32,47 +29,48 @@ jobs:
             unzip -o "$ZIP_FILE" -d dossier_decompresse
           fi
 
-      # 4. Correction automatique du code Kotlin
       - name: Corriger le code Kotlin
         run: |
-          # Correction 1 : Import Bundle manquant
+          # Correction import Bundle
           WAKE_FILE=$(find . -name "WakeWordService.kt" | head -n 1)
           if [ -n "$WAKE_FILE" ]; then
-            echo "Correction import Bundle dans $WAKE_FILE"
+            echo "Correction appliquée sur $WAKE_FILE"
             sed -i '1s/^/import android.os.Bundle\n/' "$WAKE_FILE"
           fi
 
-          # Correction 2 : Échappements \% et \_
+          # Correction échappements
           CONTACTS_FILE=$(find . -name "ContactsRepository.kt" | head -n 1)
           if [ -n "$CONTACTS_FILE" ]; then
-            echo "Correction échappements dans $CONTACTS_FILE"
+            echo "Correction appliquée sur $CONTACTS_FILE"
             sed -i 's/\\%/%/g' "$CONTACTS_FILE"
             sed -i 's/\\_/_/g' "$CONTACTS_FILE"
           fi
 
-      # 5. Compilation de l'APK
-      - name: Compiler l'APK avec Gradle
+      - name: Lancer Gradle et vérifier la sortie
         run: |
           GRADLEW_FILE=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
+          if [ -z "$GRADLEW_FILE" ]; then
+            echo "Erreur : gradlew introuvable !"
+            exit 1
+          fi
+
           PROJ_DIR=$(dirname "$GRADLEW_FILE")
-          echo "Exécution de Gradle dans : $PROJ_DIR"
+          echo "Dossier du projet : $PROJ_DIR"
           cd "$PROJ_DIR"
+          
           chmod +x gradlew
-          ./gradlew clean assembleDebug --stacktrace
+          
+          # Exécution de la compilation
+          ./gradlew assembleDebug --stacktrace --info
 
-      # 6. Extraction et préparation de l'APK généré
-      - name: Préparer l'APK pour le téléchargement
-        run: |
-          mkdir -p build_output
-          echo "Recherche des fichiers APK..."
-          find . -type f -name "*.apk" -exec cp -v {} build_output/ \;
-          echo "Contenu du dossier build_output :"
-          ls -la build_output/
+          # Inspection immédiate après le build
+          echo "--- LISTE DE TOUS LES FICHIERS APRÈS GRADLE ---"
+          find . -type f \( -name "*.apk" -o -name "*.aar" \)
+          echo "-----------------------------------------------"
 
-      # 7. Téléverser l'APK dans GitHub Actions
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
           name: VanelleOS-Debug-APK
-          path: build_output/*.apk
+          path: "**/build/outputs/apk/**/*.apk"
           if-no-files-found: error
