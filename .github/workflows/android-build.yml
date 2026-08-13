@@ -37,7 +37,6 @@ jobs:
       run: |
         RES_DIR=$(find dossier_decompresse -type d -path "*/src/main/res" | head -n 1)
 
-        # Création des dossiers pour toutes les densités d'écran
         mkdir -p "$RES_DIR/mipmap-hdpi"
         mkdir -p "$RES_DIR/mipmap-mdpi"
         mkdir -p "$RES_DIR/mipmap-xhdpi"
@@ -46,31 +45,23 @@ jobs:
         mkdir -p "$RES_DIR/mipmap-anydpi-v26"
         mkdir -p "$RES_DIR/drawable"
 
-        # Création d'une icône vectorielle détaillée du robot VanelleOS
         cat << 'EOF' > "$RES_DIR/drawable/ic_launcher_robot.xml"
         <vector xmlns:android="http://schemas.android.com/apk/res/android"
             android:width="108dp"
             android:height="108dp"
             android:viewportWidth="108"
             android:viewportHeight="108">
-            <!-- Fond blanc lumineux -->
             <path android:fillColor="#F4F8FB" android:pathData="M0,0h108v108h-108z"/>
-            <!-- Tête du Robot -->
             <path android:fillColor="#E3F2FD" android:pathData="M34,25 h40 a18,18 0 0,1 18,18 v14 a18,18 0 0,1 -18,18 h-40 a18,18 0 0,1 -18,-18 v-14 a18,18 0 0,1 18,-18 Z"/>
             <path android:fillColor="#BBDEFB" android:pathData="M34,25 h40 a18,18 0 0,1 18,18 v5 h-76 v-5 a18,18 0 0,1 18,-18 Z"/>
-            <!-- Yeux bleus lumineux -->
             <path android:fillColor="#1E88E5" android:pathData="M38,40 a6,8 0 1,0 12,0 a6,8 0 1,0 -12,0"/>
             <path android:fillColor="#1E88E5" android:pathData="M58,40 a6,8 0 1,0 12,0 a6,8 0 1,0 -12,0"/>
-            <!-- Sourire -->
             <path android:fillColor="#1E88E5" android:pathData="M49,56 q5,4 10,0 t-10,0"/>
-            <!-- Corps du Robot -->
             <path android:fillColor="#E3F2FD" android:pathData="M38,72 h32 a10,10 0 0,1 10,10 v10 a10,10 0 0,1 -10,10 h-32 a10,10 0 0,1 -10,-10 v-10 a10,10 0 0,1 10,-10 Z"/>
-            <!-- Écran de torse VANELLE -->
             <path android:fillColor="#42A5F5" android:pathData="M42,77 h24 a4,4 0 0,1 4,4 v6 a4,4 0 0,1 -4,4 h-24 a4,4 0 0,1 -4,-4 v-6 a4,4 0 0,1 4,-4 Z"/>
         </vector>
         EOF
 
-        # Configuration Android 8.0+ et anciennes versions
         cat << 'EOF' > "$RES_DIR/mipmap-anydpi-v26/ic_launcher.xml"
         <?xml version="1.0" encoding="utf-8"?>
         <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -95,7 +86,7 @@ jobs:
       run: |
         PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
         cd "$PROJ_DIR"
-        gradle assembleDebug
+        gradle assembleDebug --stacktrace
 
     - name: Récupérer l'APK
       uses: actions/upload-artifact@v4
