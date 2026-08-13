@@ -21,6 +21,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      # 1. Décompression du ZIP
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -29,48 +30,42 @@ jobs:
             unzip -o "$ZIP_FILE" -d dossier_decompresse
           fi
 
+      # 2. Correction automatique des erreurs Kotlin
       - name: Corriger le code Kotlin
         run: |
-          # Correction import Bundle
           WAKE_FILE=$(find . -name "WakeWordService.kt" | head -n 1)
           if [ -n "$WAKE_FILE" ]; then
-            echo "Correction appliquée sur $WAKE_FILE"
+            echo "Correction dans : $WAKE_FILE"
             sed -i '1s/^/import android.os.Bundle\n/' "$WAKE_FILE"
           fi
 
-          # Correction échappements
           CONTACTS_FILE=$(find . -name "ContactsRepository.kt" | head -n 1)
           if [ -n "$CONTACTS_FILE" ]; then
-            echo "Correction appliquée sur $CONTACTS_FILE"
+            echo "Correction dans : $CONTACTS_FILE"
             sed -i 's/\\%/%/g' "$CONTACTS_FILE"
             sed -i 's/\\_/_/g' "$CONTACTS_FILE"
           fi
 
-      - name: Lancer Gradle et vérifier la sortie
+      # 3. Compilation ET copie de l'APK dans la même étape
+      - name: Compiler avec Gradle et extraire l'APK
+        working-directory: dossier_decompresse
         run: |
-          GRADLEW_FILE=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
-          if [ -z "$GRADLEW_FILE" ]; then
-            echo "Erreur : gradlew introuvable !"
-            exit 1
-          fi
-
-          PROJ_DIR=$(dirname "$GRADLEW_FILE")
-          echo "Dossier du projet : $PROJ_DIR"
-          cd "$PROJ_DIR"
-          
           chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
           
-          # Exécution de la compilation
-          ./gradlew assembleDebug --stacktrace --info
+          # Création d'un dossier d'export à la racine globale
+          mkdir -p ../output_apk
+          
+          echo "Recherche et copie des fichiers APK..."
+          find . -name "*.apk" -exec cp -v {} ../output_apk/ \;
+          
+          echo "--- Fichiers présent dans output_apk ---"
+          ls -la ../output_apk/
 
-          # Inspection immédiate après le build
-          echo "--- LISTE DE TOUS LES FICHIERS APRÈS GRADLE ---"
-          find . -type f \( -name "*.apk" -o -name "*.aar" \)
-          echo "-----------------------------------------------"
-
+      # 4. Téléversement de l'APK
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
           name: VanelleOS-Debug-APK
-          path: "**/build/outputs/apk/**/*.apk"
+          path: output_apk/*.apk
           if-no-files-found: error
