@@ -26,6 +26,11 @@ jobs:
       run: |
         unzip -o *.zip -d dossier_decompresse
 
+    - name: Nettoyer les fichiers non supportés dans res/
+      run: |
+        # Supprime tout fichier .txt présent dans les dossiers de ressources Android
+        find dossier_decompresse -type f -path "*/src/main/res/*" -name "*.txt" -delete
+
     - name: Activer AndroidX dans gradle.properties
       run: |
         PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
