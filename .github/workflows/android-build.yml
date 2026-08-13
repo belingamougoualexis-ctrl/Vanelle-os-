@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Récupération du dépôt
+      # 1. Récupération du code
       - name: Checkout du projet
         uses: actions/checkout@v4
 
@@ -34,7 +34,6 @@ jobs:
 
       # 4. Correction automatique du code Kotlin
       - name: Corriger le code Kotlin
-        working-directory: dossier_decompresse
         run: |
           # Correction 1 : Import Bundle manquant
           WAKE_FILE=$(find . -name "WakeWordService.kt" | head -n 1)
@@ -53,15 +52,27 @@ jobs:
 
       # 5. Compilation de l'APK
       - name: Compiler l'APK avec Gradle
-        working-directory: dossier_decompresse
         run: |
+          GRADLEW_FILE=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
+          PROJ_DIR=$(dirname "$GRADLEW_FILE")
+          echo "Exécution de Gradle dans : $PROJ_DIR"
+          cd "$PROJ_DIR"
           chmod +x gradlew
           ./gradlew clean assembleDebug --stacktrace
 
-      # 6. Récupération et téléversement de l'APK
+      # 6. Extraction et préparation de l'APK généré
+      - name: Préparer l'APK pour le téléchargement
+        run: |
+          mkdir -p build_output
+          echo "Recherche des fichiers APK..."
+          find . -type f -name "*.apk" -exec cp -v {} build_output/ \;
+          echo "Contenu du dossier build_output :"
+          ls -la build_output/
+
+      # 7. Téléverser l'APK dans GitHub Actions
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
           name: VanelleOS-Debug-APK
-          path: dossier_decompresse/app/build/outputs/apk/debug/*.apk
+          path: build_output/*.apk
           if-no-files-found: error
