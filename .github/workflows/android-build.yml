@@ -16,46 +16,63 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 2. Si vous avez une étape de décompression d'archive, placez-la ici
-      # Ex : unzip mon_projet.zip -d dossier_decompresse
-
-      # 3. Configuration de Java 17
+      # 2. Configuration de JDK 17
       - name: Configuration de JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 4. Configuration de Gradle (On indique le sous-dossier où se trouve le projet)
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          build-root-directory: dossier_decompresse
-
-      # 5. Correction automatique des erreurs Kotlin dans les fichiers source
-      - name: Corriger les erreurs de code Kotlin
+      # 3. Décompression automatique si une archive ZIP est présente
+      - name: Décompresser l'archive (si existante)
         run: |
-          FILE_WAKE="dossier_decompresse/app/src/main/java/com/vanelle/os/WakeWordService.kt"
-          if [ -f "$FILE_WAKE" ]; then
-            sed -i '1s/^/import android.os.Bundle\n/' "$FILE_WAKE"
-            echo "Import Bundle ajouté dans WakeWordService.kt"
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Archive ZIP détectée : $ZIP_FILE. Décompression en cours..."
+            unzip -o "$ZIP_FILE" -d dossier_decompresse
+          else
+            echo "Aucune archive ZIP trouvée. Utilisation des fichiers du dépôt."
           fi
 
-          FILE_CONTACTS="dossier_decompresse/app/src/main/java/com/vanelle/os/ContactsRepository.kt"
-          if [ -f "$FILE_CONTACTS" ]; then
-            sed -i 's/\\%/%/g' "$FILE_CONTACTS"
-            sed -i 's/\\_/_/g' "$FILE_CONTACTS"
-            echo "Échappements corrigés dans ContactsRepository.kt"
+      # 4. Localisation du projet, correction des erreurs Kotlin et Build
+      - name: Corriger le code Kotlin et Compiler
+        run: |
+          # Recherche automatique du dossier contenant build.gradle ou build.gradle.kts
+          GRADLE_FILE=$(find . -name "build.gradle*" -not -path "*/.*" | head -n 1)
+
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "Erreur : Fichier build.gradle introuvable !"
+            exit 1
           fi
 
-      # 6. Lancement de la compilation dans le sous-dossier
-      - name: Build APK avec Gradle
-        run: |
-          cd dossier_decompresse
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          PROJ_DIR=$(dirname "$GRADLE_FILE")
+          echo "Dossier du projet trouvé : $PROJ_DIR"
+          cd "$PROJ_DIR"
 
-      # 7. Sauvegarde de l'APK généré
+          # --- CORRECTION 1 : Import Bundle manquant dans WakeWordService.kt ---
+          WAKE_FILE=$(find . -name "WakeWordService.kt" | head -n 1)
+          if [ -n "$WAKE_FILE" ]; then
+            echo "Correction appliquée sur $WAKE_FILE"
+            sed -i '1s/^/import android.os.Bundle\n/' "$WAKE_FILE"
+          fi
+
+          # --- CORRECTION 2 : Échappements \% et \_ dans ContactsRepository.kt ---
+          CONTACTS_FILE=$(find . -name "ContactsRepository.kt" | head -n 1)
+          if [ -n "$CONTACTS_FILE" ]; then
+            echo "Correction appliquée sur $CONTACTS_FILE"
+            sed -i 's/\\%/%/g' "$CONTACTS_FILE"
+            sed -i 's/\\_/_/g' "$CONTACTS_FILE"
+          fi
+
+          # --- COMPILATION ---
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      # 5. Téléversement de l'APK généré
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
