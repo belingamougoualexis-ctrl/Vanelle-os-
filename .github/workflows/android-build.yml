@@ -19,27 +19,20 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Installer Gradle
+      uses: gradle/actions/setup-gradle@v3
+
     - name: Décompresser le fichier ZIP
       run: |
         unzip -o *.zip -d dossier_decompresse
 
-    - name: Trouver le dossier racine de Gradle
-      run: |
-        # Cherche le dossier exact qui contient le fichier gradlew
-        GRADLE_DIR=$(find dossier_decompresse -name gradlew -exec dirname {} \;)
-        echo "GRADLE_DIR=$GRADLE_DIR" >> $GITHUB_ENV
-        echo "Dossier Gradle trouvé : $GRADLE_DIR"
-
-    - name: Donner les permissions à Gradle
-      run: |
-        chmod +x "$GRADLE_DIR/gradlew"
-
     - name: Compiler l'APK
       run: |
-        cd "$GRADLE_DIR"
-        ./gradlew assembleDebug
+        # On se déplace là où se trouve le fichier build.gradle
+        PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
+        cd "$PROJ_DIR"
+        gradle assembleDebug
 
-    
     - name: Récupérer l'APK
       uses: actions/upload-artifact@v4
       with:
