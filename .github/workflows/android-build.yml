@@ -26,43 +26,57 @@ jobs:
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
-            echo "Archive ZIP trouvée : $ZIP_FILE. Décompression..."
+            echo "Archive ZIP trouvée : $ZIP_FILE"
             unzip -o "$ZIP_FILE" -d dossier_decompresse
           fi
 
-      # 2. Correction automatique des erreurs Kotlin
+      # 2. Application des corrections dans le code Kotlin
       - name: Corriger le code Kotlin
         run: |
+          # Correction 1 : Import Bundle dans WakeWordService.kt
           WAKE_FILE=$(find . -name "WakeWordService.kt" | head -n 1)
           if [ -n "$WAKE_FILE" ]; then
-            echo "Correction dans : $WAKE_FILE"
+            echo "Modification de $WAKE_FILE"
             sed -i '1s/^/import android.os.Bundle\n/' "$WAKE_FILE"
           fi
 
+          # Correction 2 : Échappements dans ContactsRepository.kt
           CONTACTS_FILE=$(find . -name "ContactsRepository.kt" | head -n 1)
           if [ -n "$CONTACTS_FILE" ]; then
-            echo "Correction dans : $CONTACTS_FILE"
+            echo "Modification de $CONTACTS_FILE"
             sed -i 's/\\%/%/g' "$CONTACTS_FILE"
             sed -i 's/\\_/_/g' "$CONTACTS_FILE"
           fi
 
-      # 3. Compilation ET copie de l'APK dans la même étape
-      - name: Compiler avec Gradle et extraire l'APK
-        working-directory: dossier_decompresse
+      # 3. Lancement direct de Gradle et vérification du code de sortie
+      - name: Compiler avec Gradle
         run: |
+          GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
+          if [ -z "$GRADLEW_PATH" ]; then
+            echo "::error::gradlew introuvable !"
+            exit 1
+          fi
+          
+          DIR=$(dirname "$GRADLEW_PATH")
+          echo "Dossier du projet : $DIR"
+          cd "$DIR"
+          
           chmod +x gradlew
+          
+          # Lancement de la compilation
           ./gradlew assembleDebug --stacktrace
           
-          # Création d'un dossier d'export à la racine globale
-          mkdir -p ../output_apk
-          
-          echo "Recherche et copie des fichiers APK..."
-          find . -name "*.apk" -exec cp -v {} ../output_apk/ \;
-          
-          echo "--- Fichiers présent dans output_apk ---"
-          ls -la ../output_apk/
+          # Vérification post-build
+          mkdir -p "$GITHUB_WORKSPACE/output_apk"
+          find . -name "*.apk" -exec cp -v {} "$GITHUB_WORKSPACE/output_apk/" \;
 
-      # 4. Téléversement de l'APK
+      # 4. Afficher les fichiers récupérés
+      - name: Vérifier la présence de l'APK
+        run: |
+          echo "Contenu du dossier d'exportation :"
+          ls -la "$GITHUB_WORKSPACE/output_apk"
+
+      # 5. Téléverser l'APK
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
