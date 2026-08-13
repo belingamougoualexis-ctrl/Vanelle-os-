@@ -26,9 +26,14 @@ jobs:
       run: |
         unzip -o *.zip -d dossier_decompresse
 
+    - name: Activer AndroidX dans gradle.properties
+      run: |
+        PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
+        echo "android.useAndroidX=true" >> "$PROJ_DIR/gradle.properties"
+        echo "android.enableJetifier=true" >> "$PROJ_DIR/gradle.properties"
+
     - name: Compiler l'APK
       run: |
-        # On se déplace là où se trouve le fichier build.gradle
         PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
         cd "$PROJ_DIR"
         gradle assembleDebug
