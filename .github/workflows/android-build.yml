@@ -19,9 +19,10 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Installer Gradle (sans cache)
+    - name: Installer Gradle 8.5
       uses: gradle/actions/setup-gradle@v3
       with:
+        gradle-version: '8.5'
         cache-disabled: true
 
     - name: Décompresser le fichier ZIP
@@ -46,12 +47,7 @@ jobs:
       run: |
         PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
         cd "$PROJ_DIR"
-        if [ -f "./gradlew" ]; then
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --continue
-        else
-          gradle assembleDebug --continue
-        fi
+        gradle assembleDebug --continue
 
     - name: Récupérer l'APK
       uses: actions/upload-artifact@v4
