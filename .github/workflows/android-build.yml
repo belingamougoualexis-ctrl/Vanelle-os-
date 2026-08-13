@@ -1,0 +1,42 @@
+name: Générer l'APK VanelleOS
+
+on:
+  push:
+    branches: [ "principal" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Télécharger le projet
+      uses: actions/checkout@v4
+
+    - name: Installer Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Décompresser le fichier ZIP
+      run: |
+        unzip -o *.zip -d dossier_decompresse
+
+    - name: Donner les permissions à Gradle
+      run: |
+        cd dossier_decompresse
+        if [ -d "$(ls -A | head -n 1)" ]; then cd "$(ls -A | head -n 1)"; fi
+        chmod +x gradlew || true
+
+    - name: Compiler l'APK
+      run: |
+        cd dossier_decompresse
+        if [ -d "$(ls -A | head -n 1)" ]; then cd "$(ls -A | head -n 1)"; fi
+        ./gradlew assembleDebug
+
+    - name: Récupérer l'APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: VanelleOS-APK
+        path: dossier_decompresse/**/build/outputs/apk/debug/*.apk
