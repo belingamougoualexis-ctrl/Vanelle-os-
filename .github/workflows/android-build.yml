@@ -39,8 +39,9 @@ jobs:
         cd "$GRADLE_DIR"
         ./gradlew assembleDebug
 
+    
     - name: Récupérer l'APK
       uses: actions/upload-artifact@v4
       with:
         name: VanelleOS-APK
-        path: dossier_decompresse/**/build/outputs/apk/debug/*.apk
+        path: "**/*.apk"
