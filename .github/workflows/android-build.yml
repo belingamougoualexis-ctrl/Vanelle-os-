@@ -19,8 +19,10 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Installer Gradle
+    - name: Installer Gradle (sans cache)
       uses: gradle/actions/setup-gradle@v3
+      with:
+        cache-disabled: true
 
     - name: Décompresser le fichier ZIP
       run: |
@@ -28,7 +30,6 @@ jobs:
 
     - name: Nettoyer les fichiers non-images dans res/
       run: |
-        # Supprime les fichiers texte/invalides dans les dossiers de ressources res/
         find dossier_decompresse -type f -path "*/src/main/res/*" ! -name "*.xml" ! -name "*.png" ! -name "*.jpg" ! -name "*.webp" ! -name "*.gif" -delete || true
 
     - name: Activer AndroidX au niveau global
@@ -37,7 +38,6 @@ jobs:
         echo "android.useAndroidX=true" >> ~/.gradle/gradle.properties
         echo "android.enableJetifier=true" >> ~/.gradle/gradle.properties
 
-        # Ajoute également dans le dossier du projet trouvé
         PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
         echo "android.useAndroidX=true" >> "$PROJ_DIR/gradle.properties"
         echo "android.enableJetifier=true" >> "$PROJ_DIR/gradle.properties"
@@ -48,9 +48,9 @@ jobs:
         cd "$PROJ_DIR"
         if [ -f "./gradlew" ]; then
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --continue
         else
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug --continue
         fi
 
     - name: Récupérer l'APK
