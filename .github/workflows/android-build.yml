@@ -12,30 +12,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Récupération du code source
       - name: Checkout du projet
         uses: actions/checkout@v4
 
+      # 2. Si vous avez une étape de décompression d'archive, placez-la ici
+      # Ex : unzip mon_projet.zip -d dossier_decompresse
+
+      # 3. Configuration de Java 17
       - name: Configuration de JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
 
+      # 4. Configuration de Gradle (On indique le sous-dossier où se trouve le projet)
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          build-root-directory: dossier_decompresse
 
-      # --- ÉTAPE DE CORRECTION AUTOMATIQUE DES ERREURS KOTLIN ---
+      # 5. Correction automatique des erreurs Kotlin dans les fichiers source
       - name: Corriger les erreurs de code Kotlin
         run: |
-          # 1. Ajout de l'import 'android.os.Bundle' manquant dans WakeWordService.kt
           FILE_WAKE="dossier_decompresse/app/src/main/java/com/vanelle/os/WakeWordService.kt"
           if [ -f "$FILE_WAKE" ]; then
             sed -i '1s/^/import android.os.Bundle\n/' "$FILE_WAKE"
             echo "Import Bundle ajouté dans WakeWordService.kt"
           fi
 
-          # 2. Correction des échappements invalides \% et \_ dans ContactsRepository.kt
           FILE_CONTACTS="dossier_decompresse/app/src/main/java/com/vanelle/os/ContactsRepository.kt"
           if [ -f "$FILE_CONTACTS" ]; then
             sed -i 's/\\%/%/g' "$FILE_CONTACTS"
@@ -43,15 +48,14 @@ jobs:
             echo "Échappements corrigés dans ContactsRepository.kt"
           fi
 
-      - name: Donner les permissions d'exécution à gradlew
-        run: chmod +x gradlew || true
-
+      # 6. Lancement de la compilation dans le sous-dossier
       - name: Build APK avec Gradle
         run: |
-          PROJ_DIR=$(find dossier_decompresse -name "build.gradle*" -exec dirname {} \; | head -n 1)
-          cd "$PROJ_DIR"
+          cd dossier_decompresse
+          chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
+      # 7. Sauvegarde de l'APK généré
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
