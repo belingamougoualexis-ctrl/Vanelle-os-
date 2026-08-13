@@ -12,69 +12,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Récupération du code source
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 2. Configuration de JDK 17
       - name: Configuration de JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Décompression automatique si une archive ZIP est présente
       - name: Décompresser l'archive (si existante)
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
-            echo "Archive ZIP détectée : $ZIP_FILE. Décompression en cours..."
+            echo "Archive ZIP détectée : $ZIP_FILE. Décompression..."
             unzip -o "$ZIP_FILE" -d dossier_decompresse
-          else
-            echo "Aucune archive ZIP trouvée. Utilisation des fichiers du dépôt."
           fi
 
-      # 4. Localisation du projet, correction des erreurs Kotlin et Build
       - name: Corriger le code Kotlin et Compiler
         run: |
-          # Recherche automatique du dossier contenant build.gradle ou build.gradle.kts
           GRADLE_FILE=$(find . -name "build.gradle*" -not -path "*/.*" | head -n 1)
-
           if [ -z "$GRADLE_FILE" ]; then
-            echo "Erreur : Fichier build.gradle introuvable !"
+            echo "Erreur : build.gradle introuvable !"
             exit 1
           fi
 
           PROJ_DIR=$(dirname "$GRADLE_FILE")
-          echo "Dossier du projet trouvé : $PROJ_DIR"
+          echo "Dossier du projet : $PROJ_DIR"
           cd "$PROJ_DIR"
 
-          # --- CORRECTION 1 : Import Bundle manquant dans WakeWordService.kt ---
+          # 1. Correction import Bundle
           WAKE_FILE=$(find . -name "WakeWordService.kt" | head -n 1)
           if [ -n "$WAKE_FILE" ]; then
-            echo "Correction appliquée sur $WAKE_FILE"
             sed -i '1s/^/import android.os.Bundle\n/' "$WAKE_FILE"
           fi
 
-          # --- CORRECTION 2 : Échappements \% et \_ dans ContactsRepository.kt ---
+          # 2. Correction échappements
           CONTACTS_FILE=$(find . -name "ContactsRepository.kt" | head -n 1)
           if [ -n "$CONTACTS_FILE" ]; then
-            echo "Correction appliquée sur $CONTACTS_FILE"
             sed -i 's/\\%/%/g' "$CONTACTS_FILE"
             sed -i 's/\\_/_/g' "$CONTACTS_FILE"
           fi
 
-          # --- COMPILATION ---
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug --stacktrace
-          else
-            gradle assembleDebug --stacktrace
-          fi
+          # 3. Compilation forcée
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
 
-      # 5. Téléversement de l'APK généré
+      - name: Trouver et déplacer l'APK
+        run: |
+          mkdir -p output_apk
+          find . -name "*.apk" -exec cp {} output_apk/ \;
+          echo "Contenu du dossier d'export :"
+          ls -la output_apk/
+
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
           name: VanelleOS-Debug-APK
-          path: '**/app/build/outputs/apk/debug/*.apk'
+          path: output_apk/*.apk
+          if-no-files-found: error
