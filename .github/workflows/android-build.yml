@@ -40,73 +40,69 @@ jobs:
           def find_files(pattern):
               return glob.glob(f"./**/{pattern}", recursive=True)
 
-          # --- Fix 1: ContactsRepository.kt (Suppression de TOUS les antislashs d'échappement) ---
+          # --- Fix 1: ContactsRepository.kt (Nettoyage sécurisé des séquences d'échappement invalides) ---
           for path in find_files("ContactsRepository.kt"):
-              print(f"Nettoyage dans : {path}")
+              print(f"Nettoyage sécurisé dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
-              # Remplace les échappements \_ \% \. \( \) \"
-              content = re.sub(r'\\([_%\.()"])', r'\1', content)
+              # On cible uniquement \% et \_ explicites sans toucher aux appels de fonctions .replace()
+              content = content.replace(r'\%', '%').replace(r'\_', '_')
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- Fix 2: Fragments.kt (Gestion fine des redéclarations local val) ---
+          # --- Fix 2: Fragments.kt (Suppression globale des déclarations 'val' en doublon) ---
           for path in find_files("Fragments.kt"):
               print(f"Correction des doublons dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
               
               new_lines = []
-              seen_vars = set()
+              target_vars = {"legalCol", "privacyBtn", "termsBtn"}
+              seen_in_block = set()
+
               for line in lines:
-                  # Si on rentre dans une nouvelle fonction/méthode, on réinitialise les variables vues
-                  if "fun " in line or "override" in line:
-                      seen_vars.clear()
+                  # Réinitialiser les variables vues lors des ouvertures de blocs principaux
+                  if any(k in line for k in ["fun ", "override fun", "class "]):
+                      seen_in_block.clear()
                       
                   match = re.search(r"^\s*val\s+(legalCol|privacyBtn|termsBtn)\b", line)
                   if match:
                       var_name = match.group(1)
-                      if var_name in seen_vars:
-                          # Transforme 'val legalCol' en 'legalCol'
-                          line = re.sub(r'\bval\s+' + var_name, var_name, line, count=1)
+                      if var_name in seen_in_block:
+                          # Supprime 'val ' pour éviter la redéclaration
+                          line = line.replace("val " + var_name, var_name, 1)
                       else:
-                          seen_vars.add(var_name)
+                          seen_in_block.add(var_name)
                   new_lines.append(line)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # --- Fix 3: MemoryVault.kt (Imports MasterKey & Context) ---
+          # --- Fix 3: MemoryVault.kt (Injection d'imports pour MasterKey) ---
           for path in find_files("MemoryVault.kt"):
-              print(f"Correction des imports dans : {path}")
+              print(f"Ajout des imports MasterKey dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
               
-              # Ajout des imports pour MasterKey et EncryptedSharedPreferences
-              imports_to_add = (
-                  "\nimport androidx.security.crypto.MasterKey\n"
-                  "import androidx.security.crypto.EncryptedSharedPreferences\n"
-              )
-              if "import androidx.security.crypto" not in content:
-                  content = re.sub(r'(package [^\n]+)', r'\1' + imports_to_add, content, count=1)
-
+              imports = "\nimport androidx.security.crypto.MasterKey\nimport androidx.security.crypto.EncryptedSharedPreferences\n"
+              if "androidx.security.crypto.MasterKey" not in content:
+                  content = re.sub(r'(package\s+[^\n]+)', r'\1' + imports, content, count=1)
+                  
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- Fix 4: Injection de androidx.security:security-crypto dans build.gradle ---
+          # --- Fix 4: Injection de androidx.security:security-crypto dans TOUS les build.gradle ---
           gradle_files = find_files("build.gradle") + find_files("build.gradle.kts")
           for path in gradle_files:
-              if "app" in path:
-                  print(f"Ajout de security-crypto dans : {path}")
-                  with open(path, "r", encoding="utf-8") as f:
-                      content = f.read()
-                  
-                  if "security-crypto" not in content:
-                      dep = '\n    implementation("androidx.security:security-crypto:1.1.0-alpha06")\n'
-                      if "dependencies {" in content:
-                          content = content.replace("dependencies {", "dependencies {" + dep, 1)
-                          with open(path, "w", encoding="utf-8") as f:
-                              f.write(content)
+              print(f"Vérification dépendances Gradle dans : {path}")
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              
+              if "dependencies" in content and "security-crypto" not in content:
+                  dep = '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"\n'
+                  content = content.replace("dependencies {", "dependencies {" + dep, 1)
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(content)
           EOF
 
       # 4. Compilation avec Gradle
