@@ -15,7 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 1. Décompresser l'archive ZIP si elle existe
+      # 1. Décompresser le ZIP s'il existe
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -31,8 +31,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Correcteur de code Kotlin & Injection de dépendances
-      - name: Auto-correction intégrale du code Kotlin
+      # 3. Corrections ciblées sans dégrader la syntaxe Kotlin
+      - name: Préparation et correction du code Kotlin
         run: |
           python3 - << 'EOF'
           import os, re, glob
@@ -40,88 +40,74 @@ jobs:
           def find_files(pattern):
               return glob.glob(f"./**/{pattern}", recursive=True)
 
-          # --- FIX 1: ContactsRepository.kt ---
-          # Corrige les erreurs de syntaxe dues aux échappements invalides sans altérer .replace()
+          # --- FIX 1: ContactsRepository.kt (Remplacement littéral sécurisé) ---
           for path in find_files("ContactsRepository.kt"):
-              print(f"[Fix] Correction de la syntaxe dans : {path}")
+              print(f"Nettoyage littéral dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
-              
-              # Nettoie les antislashs problématiques
-              content = re.sub(r'\\([_%\(\)])', r'\1', content)
+              content = content.replace(r'\%', '%').replace(r'\_', '_')
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- FIX 2: Fragments.kt ---
-          # Rescope les variables locales redéclarées (legalCol, privacyBtn, termsBtn)
+          # --- FIX 2: Fragments.kt (Neutralisation par commentaire des doublons) ---
           for path in find_files("Fragments.kt"):
-              print(f"[Fix] Résolution des redéclarations dans : {path}")
+              print(f"Neutralisation des redéclarations dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
 
               new_lines = []
-              declared_vars = set()
+              seen_vars = set()
 
               for line in lines:
-                  # Réinitialise la portée à chaque nouvelle fonction
                   if "fun " in line or "override" in line:
-                      declared_vars.clear()
+                      seen_vars.clear()
 
                   match = re.search(r"^\s*val\s+(legalCol|privacyBtn|termsBtn)\b", line)
                   if match:
                       var_name = match.group(1)
-                      if var_name in declared_vars:
-                          # Transforme 'val varName =' en 'varName =' pour réutiliser la variable sans conflit
-                          line = re.sub(r'\bval\s+' + var_name, var_name, line, count=1)
+                      if var_name in seen_vars:
+                          # Commente la ligne en doublon au lieu de casser la déclaration
+                          line = "// " + line
                       else:
-                          declared_vars.add(var_name)
+                          seen_vars.add(var_name)
                   new_lines.append(line)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # --- FIX 3: MemoryVault.kt ---
-          # Résout l'incompatibilité de type Context/String et injecte les imports MasterKey
+          # --- FIX 3: MemoryVault.kt (Imports MasterKey) ---
           for path in find_files("MemoryVault.kt"):
-              print(f"[Fix] Correction de MasterKey et Context dans : {path}")
+              print(f"Ajout des imports dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
 
-              # Ajout des imports requis
               imports = (
                   "\nimport androidx.security.crypto.MasterKey\n"
                   "import androidx.security.crypto.EncryptedSharedPreferences\n"
               )
-              if "import androidx.security.crypto" not in content:
+              if "androidx.security.crypto.MasterKey" not in content:
                   content = re.sub(r'(package\s+[^\n]+)', r'\1' + imports, content, count=1)
-
-              # Correction de la signature EncryptedSharedPreferences (Compatibilité version 1.1.0)
-              content = content.replace(
-                  'EncryptedSharedPreferences.create(context,',
-                  'EncryptedSharedPreferences.create("secret_vault", MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build().toString(), context,'
-              )
 
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- FIX 4: build.gradle ---
-          # Injecte la librairie Security Crypto nécessaire à MasterKey
+          # --- FIX 4: build.gradle (Injection security-crypto 1.1.0-alpha06) ---
           gradle_files = find_files("build.gradle") + find_files("build.gradle.kts")
           for path in gradle_files:
               if "app" in path:
-                  print(f"[Fix] Ajout de security-crypto dans : {path}")
+                  print(f"Ajout de security-crypto (alpha06) dans : {path}")
                   with open(path, "r", encoding="utf-8") as f:
                       content = f.read()
 
                   if "security-crypto" not in content:
-                      dep = '\n    implementation "androidx.security:security-crypto:1.0.0"\n'
+                      dep = '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"\n'
                       content = re.sub(r'dependencies\s*\{', 'dependencies {' + dep, content, count=1)
                       with open(path, "w", encoding="utf-8") as f:
                           f.write(content)
           EOF
 
       # 4. Compilation Gradle
-      - name: Compiler l'APK
+      - name: Compiler avec Gradle
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
           if [ -z "$GRADLEW_PATH" ]; then
@@ -130,6 +116,7 @@ jobs:
           fi
 
           DIR=$(dirname "$GRADLEW_PATH")
+          echo "Dossier du projet : $DIR"
           cd "$DIR"
 
           chmod +x gradlew
@@ -138,7 +125,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           find . -name "*.apk" -exec cp -v {} "$GITHUB_WORKSPACE/output_apk/" \;
 
-      # 5. Export de l'APK généré
+      # 5. Téléversement de l'APK
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
