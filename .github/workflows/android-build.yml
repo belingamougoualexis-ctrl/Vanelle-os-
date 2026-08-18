@@ -103,8 +103,8 @@ jobs:
           chmod +x gradlew
         working-directory: ${{ env.PROJECT_DIR }}
 
-      - name: Build APK with Detailed Kotlin Logs
-        run: ./gradlew assembleDebug --stacktrace --info
+      - name: Build APK with Gradle
+        run: ./gradlew assembleDebug --stacktrace --console=plain -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
         working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Upload Build Artifact (APK)
