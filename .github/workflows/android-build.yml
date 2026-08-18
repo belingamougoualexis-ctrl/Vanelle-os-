@@ -35,23 +35,22 @@ jobs:
 
       - name: Locate Root Android Directory
         run: |
-          # 1. Recherche du fichier settings.gradle (prioritaire)
-          SETTINGS_FILE=$(find . -maxdepth 4 -name "settings.gradle*" | head -n 1)
-          
-          # 2. Fallback sur build.gradle au besoin
-          if [ -z "$SETTINGS_FILE" ]; then
-            SETTINGS_FILE=$(find . -maxdepth 4 -name "build.gradle*" | head -n 1)
-          fi
+          echo "=== Arborescence détectée ==="
+          find . -maxdepth 4 -name "settings.gradle*" -o -name "build.gradle*"
 
-          if [ -z "$SETTINGS_FILE" ]; then
+          # Recherche précise du dossier contenant settings.gradle ou build.gradle
+          TARGET_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
+
+          if [ -z "$TARGET_FILE" ]; then
             echo "Erreur: Aucun fichier de configuration Gradle trouvé !"
             exit 1
           fi
 
-          # Extraction du dossier racine exact
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-          echo "Projet Android trouvé dans le dossier : $PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          # Obtenir le chemin absolu du dossier parent
+          REAL_PROJECT_DIR=$(cd $(dirname "$TARGET_FILE") && pwd)
+
+          echo "Projet Android localisé dans : $REAL_PROJECT_DIR"
+          echo "PROJECT_DIR=$REAL_PROJECT_DIR" >> $GITHUB_ENV
 
       - name: Fetch or Create Permanent Keystore
         run: |
