@@ -15,7 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 1. Décompresser l'archive ZIP
+      # 1. Décompression de l'archive si elle existe
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -24,102 +24,94 @@ jobs:
             unzip -o "$ZIP_FILE" -d dossier_decompresse
           fi
 
-      # 2. Configuration de JDK 17
+      # 2. Configuration JDK 17
       - name: Configuration de JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Réécriture propre et sans dépendance externe des fichiers Kotlin
-      - name: Injection de code Kotlin propre
+      # 3. Correcteur structurel Kotlin
+      - name: Correction structurelle du code Kotlin
         run: |
           python3 - << 'EOF'
-          import os
+          import os, re
 
           def find_all(name):
-              result = []
+              res = []
               for root, dirs, files in os.walk("."):
                   if name in files:
-                      result.append(os.path.join(root, name))
-              return result
+                      res.append(os.path.join(root, name))
+              return res
 
-          # 1. NETTOYAGE DU CONTACTS REPOSITORY (Suppression des antislashs illégaux)
+          # --- FIX 1: ContactsRepository.kt (Purger les antislashs invalides) ---
           for path in find_all("ContactsRepository.kt"):
-              print(f"Nettoyage de : {path}")
+              print(f"[Fix] Nettoyage des antislashs dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
-                  content = f.read()
-              
-              # Correction basique de la chaîne de texte avec échappements invalides
-              clean_content = content.replace(r'\%', '%').replace(r'\_', '_').replace(r'\(', '(').replace(r'\)', ')')
+                  lines = f.readlines()
+              new_lines = [re.sub(r'\\([_%\(\)\.=\+])', r'\1', line) for line in lines]
               with open(path, "w", encoding="utf-8") as f:
-                  f.write(clean_content)
+                  f.writelines(new_lines)
 
-          # 2. NETTOYAGE DE FRAGMENTS.KT (Correction des 'Conflicting declarations')
+          # --- FIX 2: Fragments.kt (Renumérotation des doublons val) ---
           for path in find_all("Fragments.kt"):
-              print(f"Correction des conflits dans : {path}")
+              print(f"[Fix] Renommage des variables en double dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
 
               new_lines = []
-              seen_vars = set()
+              var_counts = {}
 
               for line in lines:
                   if "fun " in line or "class " in line or "override" in line:
-                      seen_vars.clear()
+                      var_counts.clear()
 
-                  # Si une variable est redéclarée avec val, on retire le mot clé val
-                  if "val legalCol" in line:
-                      if "legalCol" in seen_vars:
-                          line = line.replace("val legalCol", "legalCol")
-                      else:
-                          seen_vars.add("legalCol")
-                  elif "val privacyBtn" in line:
-                      if "privacyBtn" in seen_vars:
-                          line = line.replace("val privacyBtn", "privacyBtn")
-                      else:
-                          seen_vars.add("privacyBtn")
-                  elif "val termsBtn" in line:
-                      if "termsBtn" in seen_vars:
-                          line = line.replace("val termsBtn", "termsBtn")
-                      else:
-                          seen_vars.add("termsBtn")
+                  match = re.search(r'\bval\s+(legalCol|privacyBtn|termsBtn)\b', line)
+                  if match:
+                      var_name = match.group(1)
+                      var_counts[var_name] = var_counts.get(var_name, 0) + 1
+                      if var_counts[var_name] > 1:
+                          # Renomme la variable locale en doublon (ex: legalCol_2)
+                          new_var = f"{var_name}_{var_counts[var_name]}"
+                          line = re.sub(r'\bval\s+' + var_name + r'\b', f"val {new_var}", line)
 
                   new_lines.append(line)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # 3. REÉCRITURE SÉCURISÉE DE MEMORYVAULT.KT (Compatibilité SharedPreferences)
+          # --- FIX 3: MemoryVault.kt (Remplacement par un composant robuste sans dépendance) ---
           memory_vault_code = """package com.vanelle.os
 
           import android.content.Context
           import android.content.SharedPreferences
 
-          class MemoryVault(context: Context) {
-              private val prefs: SharedPreferences = context.getSharedPreferences("secret_vault_prefs", Context.MODE_PRIVATE)
+          class MemoryVault(private val context: Context) {
+              private val prefs: SharedPreferences = context.getSharedPreferences("memory_vault_prefs", Context.MODE_PRIVATE)
 
-              fun saveString(key: String, value: String) {
-                  prefs.edit().putString(key, value).apply()
-              }
+              fun getString(key: String, defValue: String = ""): String = prefs.getString(key, defValue) ?: defValue
+              fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+              fun saveString(key: String, value: String) = putString(key, value)
+              fun get(key: String, defValue: String = ""): String = getString(key, defValue)
+              fun save(key: String, value: String) = putString(key, value)
+              fun clear() = prefs.edit().clear().apply()
 
-              fun getString(key: String, defaultValue: String = ""): String {
-                  return prefs.getString(key, defaultValue) ?: defaultValue
-              }
-
-              fun clear() {
-                  prefs.edit().clear().apply()
+              companion object {
+                  @Volatile private var instance: MemoryVault? = null
+                  fun getInstance(context: Context): MemoryVault =
+                      instance ?: synchronized(this) {
+                          instance ?: MemoryVault(context.applicationContext).also { instance = it }
+                      }
               }
           }
           """
           for path in find_all("MemoryVault.kt"):
-              print(f"Remplacement par une version stable dans : {path}")
+              print(f"[Fix] Réécriture sécurisée de : {path}")
               with open(path, "w", encoding="utf-8") as f:
                   f.write(memory_vault_code)
-
           EOF
 
-      # 4. Compilation Gradle
+      # 4. Compilation avec Gradle
       - name: Compiler l'APK
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
