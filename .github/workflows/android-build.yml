@@ -15,7 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 1. Décompression de l'archive si présente
+      # 1. Décompresser le ZIP s'il existe
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -31,8 +31,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Corrections structurelles des fichiers Kotlin
-      - name: Nettoyage et correction des fichiers source
+      # 3. Correcteur ciblé Kotlin & Injection des dépendances Gradle
+      - name: Correction chirurgicale du code Kotlin
         run: |
           python3 - << 'EOF'
           import os, re, glob
@@ -40,69 +40,83 @@ jobs:
           def find_files(pattern):
               return glob.glob(f"./**/{pattern}", recursive=True)
 
-          # --- FIX 1: ContactsRepository.kt ---
+          # --- FIX 1: ContactsRepository.kt (Suppression globale des échappements invalides) ---
           for path in find_files("ContactsRepository.kt"):
-              print(f"Nettoyage : {path}")
+              print(f"[Fix] Nettoyage des antislashs dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
-              # Suppression uniquement des échappements invalides \% et \_
-              content = content.replace(r'\%', '%').replace(r'\_', '_')
+              # Supprime tout antislash qui n'est PAS un échappement Kotlin valide (n, t, b, r, ', ", \, $, u)
+              fixed_content = re.sub(r'\\(?![ntbr\'"\\$u])', '', content)
               with open(path, "w", encoding="utf-8") as f:
-                  f.write(content)
+                  f.write(fixed_content)
 
-          # --- FIX 2: Fragments.kt ---
+          # --- FIX 2: Fragments.kt (Transformation val -> var + réaffectation) ---
           for path in find_files("Fragments.kt"):
-              print(f"Nettoyage des doublons : {path}")
+              print(f"[Fix] Résolution des redéclarations val dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
 
               new_lines = []
-              seen_in_scope = set()
+              declared_vars = set()
 
               for line in lines:
-                  if any(clause in line for clause in ["fun ", "override", "class "]):
-                      seen_in_scope.clear()
+                  # Réinitialise la portée au début d'une fonction/classe
+                  if re.search(r'\b(fun|class|override)\b', line):
+                      declared_vars.clear()
 
-                  match = re.search(r"^\s*val\s+(legalCol|privacyBtn|termsBtn)\b", line)
+                  match = re.search(r'(\bval\s+)(legalCol|privacyBtn|termsBtn)\b', line)
                   if match:
-                      var_name = match.group(1)
-                      if var_name in seen_in_scope:
-                          # Remplace la déclaration 'val x = ...' par une affectation 'x = ...'
-                          line = re.sub(r'\bval\s+', '', line, count=1)
+                      var_name = match.group(2)
+                      if var_name in declared_vars:
+                          # Si la variable a déjà été vue, on retire 'val' (simple réaffectation)
+                          line = re.sub(r'\bval\s+' + var_name, var_name, line, count=1)
                       else:
-                          seen_in_scope.add(var_name)
+                          # Première déclaration : on remplace 'val' par 'var' pour autoriser la réaffectation
+                          line = re.sub(r'\bval\s+' + var_name, 'var ' + var_name, line, count=1)
+                          declared_vars.add(var_name)
+
                   new_lines.append(line)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # --- FIX 3: MemoryVault.kt ---
+          # --- FIX 3: MemoryVault.kt (Imports MasterKey & Crypto) ---
           for path in find_files("MemoryVault.kt"):
-              print(f"Ajout d'imports : {path}")
+              print(f"[Fix] Ajout des imports Security dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
 
-              imports = "\nimport androidx.security.crypto.MasterKey\nimport androidx.security.crypto.EncryptedSharedPreferences\n"
-              if "import androidx.security.crypto" not in content:
+              imports = (
+                  "\nimport androidx.security.crypto.MasterKey\n"
+                  "import androidx.security.crypto.EncryptedSharedPreferences\n"
+              )
+              if "androidx.security.crypto.MasterKey" not in content:
                   content = re.sub(r'(package\s+[^\n]+)', r'\1' + imports, content, count=1)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- FIX 4: build.gradle ---
+          # --- FIX 4: build.gradle (Injection de security-crypto dans tous les modules Gradle) ---
           gradle_files = find_files("build.gradle") + find_files("build.gradle.kts")
           for path in gradle_files:
-              if "app" in path:
-                  with open(path, "r", encoding="utf-8") as f:
-                      content = f.read()
-                  if "security-crypto" not in content:
-                      dep = '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"\n'
-                      content = re.sub(r'dependencies\s*\{', 'dependencies {' + dep, content, count=1)
-                      with open(path, "w", encoding="utf-8") as f:
-                          f.write(content)
+              print(f"[Fix] Injection dépendance Security dans : {path}")
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+
+              if "dependencies" in content and "security-crypto" not in content:
+                  dep_groovy = '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"\n'
+                  dep_kts = '\n    implementation("androidx.security:security-crypto:1.1.0-alpha06")\n'
+
+                  if path.endswith(".kts"):
+                      content = re.sub(r'dependencies\s*\{', 'dependencies {' + dep_kts, content, count=1)
+                  else:
+                      content = re.sub(r'dependencies\s*\{', 'dependencies {' + dep_groovy, content, count=1)
+
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(content)
           EOF
 
-      # 4. Compilation avec capture d'erreurs lisible
+      # 4. Compilation avec Gradle
       - name: Compiler avec Gradle
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
@@ -115,7 +129,6 @@ jobs:
           cd "$DIR"
           chmod +x gradlew
 
-          # Exécution de la compilation
           ./gradlew assembleDebug > gradle_build.log 2>&1 || BUILD_FAILED=true
 
           if [ "$BUILD_FAILED" = "true" ]; then
