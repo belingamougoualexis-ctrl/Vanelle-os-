@@ -15,7 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 1. Décompresser le ZIP s'il existe
+      # 1. Décompression de l'archive si présente
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -31,8 +31,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Corrections ciblées sans dégrader la syntaxe Kotlin
-      - name: Préparation et correction du code Kotlin
+      # 3. Corrections structurelles des fichiers Kotlin
+      - name: Nettoyage et correction des fichiers source
         run: |
           python3 - << 'EOF'
           import os, re, glob
@@ -40,65 +40,61 @@ jobs:
           def find_files(pattern):
               return glob.glob(f"./**/{pattern}", recursive=True)
 
-          # --- FIX 1: ContactsRepository.kt (Remplacement littéral sécurisé) ---
+          # --- FIX 1: ContactsRepository.kt ---
           for path in find_files("ContactsRepository.kt"):
-              print(f"Nettoyage littéral dans : {path}")
+              print(f"Nettoyage : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
+              # Suppression uniquement des échappements invalides \% et \_
               content = content.replace(r'\%', '%').replace(r'\_', '_')
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- FIX 2: Fragments.kt (Neutralisation par commentaire des doublons) ---
+          # --- FIX 2: Fragments.kt ---
           for path in find_files("Fragments.kt"):
-              print(f"Neutralisation des redéclarations dans : {path}")
+              print(f"Nettoyage des doublons : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
 
               new_lines = []
-              seen_vars = set()
+              seen_in_scope = set()
 
               for line in lines:
-                  if "fun " in line or "override" in line:
-                      seen_vars.clear()
+                  if any(clause in line for clause in ["fun ", "override", "class "]):
+                      seen_in_scope.clear()
 
                   match = re.search(r"^\s*val\s+(legalCol|privacyBtn|termsBtn)\b", line)
                   if match:
                       var_name = match.group(1)
-                      if var_name in seen_vars:
-                          # Commente la ligne en doublon au lieu de casser la déclaration
-                          line = "// " + line
+                      if var_name in seen_in_scope:
+                          # Remplace la déclaration 'val x = ...' par une affectation 'x = ...'
+                          line = re.sub(r'\bval\s+', '', line, count=1)
                       else:
-                          seen_vars.add(var_name)
+                          seen_in_scope.add(var_name)
                   new_lines.append(line)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # --- FIX 3: MemoryVault.kt (Imports MasterKey) ---
+          # --- FIX 3: MemoryVault.kt ---
           for path in find_files("MemoryVault.kt"):
-              print(f"Ajout des imports dans : {path}")
+              print(f"Ajout d'imports : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
 
-              imports = (
-                  "\nimport androidx.security.crypto.MasterKey\n"
-                  "import androidx.security.crypto.EncryptedSharedPreferences\n"
-              )
-              if "androidx.security.crypto.MasterKey" not in content:
+              imports = "\nimport androidx.security.crypto.MasterKey\nimport androidx.security.crypto.EncryptedSharedPreferences\n"
+              if "import androidx.security.crypto" not in content:
                   content = re.sub(r'(package\s+[^\n]+)', r'\1' + imports, content, count=1)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- FIX 4: build.gradle (Injection security-crypto 1.1.0-alpha06) ---
+          # --- FIX 4: build.gradle ---
           gradle_files = find_files("build.gradle") + find_files("build.gradle.kts")
           for path in gradle_files:
               if "app" in path:
-                  print(f"Ajout de security-crypto (alpha06) dans : {path}")
                   with open(path, "r", encoding="utf-8") as f:
                       content = f.read()
-
                   if "security-crypto" not in content:
                       dep = '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"\n'
                       content = re.sub(r'dependencies\s*\{', 'dependencies {' + dep, content, count=1)
@@ -106,7 +102,7 @@ jobs:
                           f.write(content)
           EOF
 
-      # 4. Compilation Gradle
+      # 4. Compilation avec capture d'erreurs lisible
       - name: Compiler avec Gradle
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
@@ -116,16 +112,25 @@ jobs:
           fi
 
           DIR=$(dirname "$GRADLEW_PATH")
-          echo "Dossier du projet : $DIR"
           cd "$DIR"
-
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+
+          # Exécution de la compilation
+          ./gradlew assembleDebug > gradle_build.log 2>&1 || BUILD_FAILED=true
+
+          if [ "$BUILD_FAILED" = "true" ]; then
+            echo "=================================================="
+            echo "       ERREURS DE COMPILATION KOTLIN DETECTEES    "
+            echo "=================================================="
+            grep -E "e: file://|error:" gradle_build.log || tail -n 50 gradle_build.log
+            echo "=================================================="
+            exit 1
+          fi
 
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           find . -name "*.apk" -exec cp -v {} "$GITHUB_WORKSPACE/output_apk/" \;
 
-      # 5. Téléversement de l'APK
+      # 5. Export de l'APK
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
