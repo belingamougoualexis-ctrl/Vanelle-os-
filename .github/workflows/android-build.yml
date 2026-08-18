@@ -15,7 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 1. Décompresser le ZIP en premier s'il existe
+      # 1. Décompresser le ZIP s'il existe
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -31,8 +31,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Auto-corrections du code Kotlin et injection des dépendances manquantes
-      - name: Corriger le code et configurer Gradle
+      # 3. Corrections ciblées des erreurs Kotlin & Ajout des dépendances
+      - name: Corriger le code Kotlin et gradle
         run: |
           python3 - << 'EOF'
           import os, re, glob
@@ -40,66 +40,68 @@ jobs:
           def find_files(pattern):
               return glob.glob(f"./**/{pattern}", recursive=True)
 
-          # --- Fix 1: ContactsRepository.kt (Séquences d'échappement) ---
+          # --- Fix 1: ContactsRepository.kt (Suppression de TOUS les antislashs d'échappement) ---
           for path in find_files("ContactsRepository.kt"):
-              print(f"Nettoyage des échappements dans : {path}")
+              print(f"Nettoyage dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   content = f.read()
-              content = content.replace(r"\%", "%").replace(r"\_", "_")
+              # Remplace les échappements \_ \% \. \( \) \"
+              content = re.sub(r'\\([_%\.()"])', r'\1', content)
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- Fix 2: WakeWordService.kt (Syntaxe et imports) ---
-          for path in find_files("WakeWordService.kt"):
-              print(f"Correction des imports dans : {path}")
-              with open(path, "r", encoding="utf-8") as f:
-                  lines = f.readlines()
-              
-              lines = [l for l in lines if not l.strip() == "import android.os.Bundle"]
-              
-              new_lines = []
-              package_found = False
-              for line in lines:
-                  new_lines.append(line)
-                  if line.strip().startswith("package ") and not package_found:
-                      new_lines.append("\nimport android.os.Bundle\n")
-                      package_found = True
-              
-              with open(path, "w", encoding="utf-8") as f:
-                  f.writelines(new_lines)
-
-          # --- Fix 3: Fragments.kt (Variables en doublon) ---
+          # --- Fix 2: Fragments.kt (Gestion fine des redéclarations local val) ---
           for path in find_files("Fragments.kt"):
-              print(f"Résolution des variables en doublon dans : {path}")
+              print(f"Correction des doublons dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
               
-              seen_vars = set()
               new_lines = []
+              seen_vars = set()
               for line in lines:
+                  # Si on rentre dans une nouvelle fonction/méthode, on réinitialise les variables vues
+                  if "fun " in line or "override" in line:
+                      seen_vars.clear()
+                      
                   match = re.search(r"^\s*val\s+(legalCol|privacyBtn|termsBtn)\b", line)
                   if match:
                       var_name = match.group(1)
                       if var_name in seen_vars:
-                          line = line.replace("val " + var_name, var_name, 1)
+                          # Transforme 'val legalCol' en 'legalCol'
+                          line = re.sub(r'\bval\s+' + var_name, var_name, line, count=1)
                       else:
                           seen_vars.add(var_name)
-                  elif "override fun" in line or "fun " in line:
-                      seen_vars.clear()
                   new_lines.append(line)
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # --- Fix 4: Injection automatique de security-crypto pour MasterKey ---
+          # --- Fix 3: MemoryVault.kt (Imports MasterKey & Context) ---
+          for path in find_files("MemoryVault.kt"):
+              print(f"Correction des imports dans : {path}")
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              
+              # Ajout des imports pour MasterKey et EncryptedSharedPreferences
+              imports_to_add = (
+                  "\nimport androidx.security.crypto.MasterKey\n"
+                  "import androidx.security.crypto.EncryptedSharedPreferences\n"
+              )
+              if "import androidx.security.crypto" not in content:
+                  content = re.sub(r'(package [^\n]+)', r'\1' + imports_to_add, content, count=1)
+
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(content)
+
+          # --- Fix 4: Injection de androidx.security:security-crypto dans build.gradle ---
           gradle_files = find_files("build.gradle") + find_files("build.gradle.kts")
           for path in gradle_files:
               if "app" in path:
-                  print(f"Ajout de la dépendance Crypto dans : {path}")
+                  print(f"Ajout de security-crypto dans : {path}")
                   with open(path, "r", encoding="utf-8") as f:
                       content = f.read()
                   
-                  if "androidx.security:security-crypto" not in content:
+                  if "security-crypto" not in content:
                       dep = '\n    implementation("androidx.security:security-crypto:1.1.0-alpha06")\n'
                       if "dependencies {" in content:
                           content = content.replace("dependencies {", "dependencies {" + dep, 1)
@@ -107,7 +109,7 @@ jobs:
                               f.write(content)
           EOF
 
-      # 4. Lancement de la compilation Gradle
+      # 4. Compilation avec Gradle
       - name: Compiler avec Gradle
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
@@ -126,13 +128,13 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           find . -name "*.apk" -exec cp -v {} "$GITHUB_WORKSPACE/output_apk/" \;
 
-      # 5. Vérification du fichier APK généré
+      # 5. Vérification
       - name: Vérifier la présence de l'APK
         run: |
           echo "Contenu du dossier d'exportation :"
           ls -la "$GITHUB_WORKSPACE/output_apk"
 
-      # 6. Téléversement de l'APK dans GitHub Actions
+      # 6. Téléversement de l'APK
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
