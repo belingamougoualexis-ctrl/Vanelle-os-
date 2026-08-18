@@ -35,21 +35,26 @@ jobs:
 
       - name: Locate Root Android Directory
         run: |
-          echo "=== Arborescence détectée ==="
-          find . -maxdepth 4 -name "settings.gradle*" -o -name "build.gradle*"
+          echo "=== Recherche de la VRAIE racine (settings.gradle) ==="
+          
+          # On cherche exclusivement settings.gradle pour éviter de tomber sur le sous-dossier /app
+          SETTINGS_FILE=$(find . -name "settings.gradle*" | head -n 1)
 
-          # Recherche précise du dossier contenant settings.gradle ou build.gradle
-          TARGET_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::warning::settings.gradle non trouvé. Recherche fallback de build.gradle au niveau supérieur..."
+            # On prend le build.gradle avec le chemin le plus court
+            SETTINGS_FILE=$(find . -name "build.gradle*" | awk '{ print length, $0 }' | sort -n | cut -d" " -f2- | head -n 1)
+          fi
 
-          if [ -z "$TARGET_FILE" ]; then
-            echo "Erreur: Aucun fichier de configuration Gradle trouvé !"
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "Erreur: Aucun projet Gradle valide trouvé !"
             exit 1
           fi
 
-          # Obtenir le chemin absolu du dossier parent
-          REAL_PROJECT_DIR=$(cd $(dirname "$TARGET_FILE") && pwd)
+          # Obtenir le chemin absolu du dossier racine
+          REAL_PROJECT_DIR=$(cd $(dirname "$SETTINGS_FILE") && pwd)
 
-          echo "Projet Android localisé dans : $REAL_PROJECT_DIR"
+          echo "Racine du projet Android localisée dans : $REAL_PROJECT_DIR"
           echo "PROJECT_DIR=$REAL_PROJECT_DIR" >> $GITHUB_ENV
 
       - name: Fetch or Create Permanent Keystore
