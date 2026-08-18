@@ -21,7 +21,7 @@ jobs:
 
       - name: Extract zip archives if present
         run: |
-          ZIP_FILE=$(find . -name "*.zip" | head -n 1)
+          ZIP_FILE=$(find . -name "*.zip" -not -path "*/.*" | head -n 1)
           if [ -n "$ZIP_FILE" ]; then
             echo "Archive ZIP trouvée : $ZIP_FILE. Décompression..."
             unzip -o "$ZIP_FILE" -d ./extracted_project
@@ -35,27 +35,27 @@ jobs:
 
       - name: Locate Root Android Directory
         run: |
-          echo "=== Recherche de la VRAIE racine (settings.gradle) ==="
+          echo "=== Recherche du répertoire racine Android ==="
           
-          # On cherche exclusivement settings.gradle pour éviter de tomber sur le sous-dossier /app
-          SETTINGS_FILE=$(find . -name "settings.gradle*" | head -n 1)
+          # Cherche en priorité settings.gradle ou settings.gradle.kts
+          SETTINGS_PATH=$(find . -name "settings.gradle*" -not -path "*/.*" | head -n 1)
 
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "::warning::settings.gradle non trouvé. Recherche fallback de build.gradle au niveau supérieur..."
-            # On prend le build.gradle avec le chemin le plus court
-            SETTINGS_FILE=$(find . -name "build.gradle*" | awk '{ print length, $0 }' | sort -n | cut -d" " -f2- | head -n 1)
+          # Fallback si pas de settings.gradle : cherche le build.gradle le plus haut dans la hiérarchie
+          if [ -z "$SETTINGS_PATH" ]; then
+            echo "settings.gradle non trouvé, recherche du build.gradle racine..."
+            SETTINGS_PATH=$(find . -name "build.gradle*" -not -path "*/.*" | awk '{ print length, $0 }' | sort -n | cut -d" " -f2- | head -n 1)
           fi
 
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "Erreur: Aucun projet Gradle valide trouvé !"
+          if [ -z "$SETTINGS_PATH" ]; then
+            echo "::error::Aucun fichier de configuration Gradle trouvé dans le dépôt !"
             exit 1
           fi
 
-          # Obtenir le chemin absolu du dossier racine
-          REAL_PROJECT_DIR=$(cd $(dirname "$SETTINGS_FILE") && pwd)
+          # Calcul du dossier parent exact
+          REAL_ROOT=$(cd $(dirname "$SETTINGS_PATH") && pwd)
 
-          echo "Racine du projet Android localisée dans : $REAL_PROJECT_DIR"
-          echo "PROJECT_DIR=$REAL_PROJECT_DIR" >> $GITHUB_ENV
+          echo "Racine Android détectée : $REAL_ROOT"
+          echo "PROJECT_DIR=$REAL_ROOT" >> $GITHUB_ENV
 
       - name: Fetch or Create Permanent Keystore
         run: |
@@ -64,17 +64,15 @@ jobs:
           
           KEYSTORE_FETCHED=false
           if git fetch origin keystore-store:refs/remotes/origin/keystore-store 2>/dev/null; then
-            echo "Branche distante trouvée ! Tentative d'extraction..."
+            echo "Branche distante trouvée ! Extraction du keystore..."
             if git checkout refs/remotes/origin/keystore-store -- release.keystore 2>/dev/null; then
               echo "Clé release.keystore récupérée avec succès !"
               KEYSTORE_FETCHED=true
-            else
-              echo "Fichier release.keystore non trouvé sur la branche. Régénération..."
             fi
           fi
 
           if [ "$KEYSTORE_FETCHED" = false ]; then
-            echo "Génération d'une nouvelle clé PERMANENTE unique..."
+            echo "Génération d'une nouvelle clé PERMANENTE..."
             keytool -genkeypair -v -keystore release.keystore \
               -alias vanellekey \
               -keyalg RSA -keysize 2048 -validity 10000 \
@@ -82,7 +80,6 @@ jobs:
               -dname "CN=Vanelle, OU=App, O=Vanelle, L=City, ST=State, C=FR"
             
             CURRENT_BRANCH=${{ github.ref_name }}
-            
             cp release.keystore /tmp/release.keystore
             git branch -D keystore-store 2>/dev/null || true
             
