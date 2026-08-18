@@ -36,24 +36,19 @@ jobs:
       - name: Locate Root Android Directory
         run: |
           echo "=== Recherche du répertoire racine Android ==="
-          
-          # Cherche en priorité settings.gradle ou settings.gradle.kts
           SETTINGS_PATH=$(find . -name "settings.gradle*" -not -path "*/.*" | head -n 1)
 
-          # Fallback si pas de settings.gradle : cherche le build.gradle le plus haut dans la hiérarchie
           if [ -z "$SETTINGS_PATH" ]; then
             echo "settings.gradle non trouvé, recherche du build.gradle racine..."
             SETTINGS_PATH=$(find . -name "build.gradle*" -not -path "*/.*" | awk '{ print length, $0 }' | sort -n | cut -d" " -f2- | head -n 1)
           fi
 
           if [ -z "$SETTINGS_PATH" ]; then
-            echo "::error::Aucun fichier de configuration Gradle trouvé dans le dépôt !"
+            echo "::error::Aucun fichier de configuration Gradle trouvé !"
             exit 1
           fi
 
-          # Calcul du dossier parent exact
           REAL_ROOT=$(cd $(dirname "$SETTINGS_PATH") && pwd)
-
           echo "Racine Android détectée : $REAL_ROOT"
           echo "PROJECT_DIR=$REAL_ROOT" >> $GITHUB_ENV
 
@@ -108,12 +103,13 @@ jobs:
           chmod +x gradlew
         working-directory: ${{ env.PROJECT_DIR }}
 
-      - name: Build APK with Gradle
-        run: ./gradlew assembleDebug --continue
+      - name: Build APK with Detailed Kotlin Logs
+        run: ./gradlew assembleDebug --stacktrace --info
         working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Upload Build Artifact (APK)
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: app-debug
           path: '${{ env.PROJECT_DIR }}/**/build/outputs/apk/debug/*.apk'
