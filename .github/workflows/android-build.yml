@@ -15,14 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      - name: Configuration de JDK 17
-        uses: actions/setup-java@v5
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'gradle'
-
-      # 1. Décompression du ZIP s'il existe
+      # 1. Décompresser le ZIP en premier pour extraire les fichiers du projet
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -31,7 +24,14 @@ jobs:
             unzip -o "$ZIP_FILE" -d dossier_decompresse
           fi
 
-      # 2. Application des corrections dans le code Kotlin via un script Python dédié
+      # 2. Configuration de JDK 17 (sans l'option cache automatique qui pose problème)
+      - name: Configuration de JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # 3. Application des corrections dans le code Kotlin via Python
       - name: Corriger le code Kotlin
         run: |
           python3 -c '
@@ -40,7 +40,7 @@ jobs:
           def find_files(name):
               return glob.glob(f"./**/{name}", recursive=True)
 
-          # --- Fix 1: ContactsRepository.kt (Séquences d\'échappement invalides) ---
+          # --- Fix 1: ContactsRepository.kt (Séquences d\'échappement) ---
           for path in find_files("ContactsRepository.kt"):
               print(f"Nettoyage des échappements dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
@@ -49,16 +49,14 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # --- Fix 2: WakeWordService.kt (Nettoyage de la syntaxe et des imports) ---
+          # --- Fix 2: WakeWordService.kt (Syntaxe et imports) ---
           for path in find_files("WakeWordService.kt"):
               print(f"Correction des imports dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
               
-              # Dépoussiérage des doublons/erreurs sur import Bundle
               lines = [l for l in lines if not l.strip() == "import android.os.Bundle"]
               
-              # Insertion propre d\'import android.os.Bundle juste après le package
               new_lines = []
               package_found = False
               for line in lines:
@@ -70,13 +68,12 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # --- Fix 3: Fragments.kt (Redéclarations conflictuelles de variables) ---
+          # --- Fix 3: Fragments.kt (Variables en doublon) ---
           for path in find_files("Fragments.kt"):
               print(f"Résolution des variables en doublon dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
               
-              # Transformation des redéclarations locales `val legalCol =` en assignations `=` si déjà déclarées
               seen_vars = set()
               new_lines = []
               for line in lines:
@@ -84,12 +81,10 @@ jobs:
                   if match:
                       var_name = match.group(1)
                       if var_name in seen_vars:
-                          # Déjà vu dans le bloc, on retire le "val " pour éviter le "Conflicting declarations"
                           line = line.replace("val " + var_name, var_name, 1)
                       else:
                           seen_vars.add(var_name)
                   elif "override fun" in line or "fun " in line:
-                      # Re-initialisation du scope à chaque nouvelle fonction
                       seen_vars.clear()
                   new_lines.append(line)
 
@@ -97,7 +92,7 @@ jobs:
                   f.writelines(new_lines)
           '
 
-      # 3. Lancement direct de Gradle
+      # 4. Lancement de Gradle
       - name: Compiler avec Gradle
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
@@ -111,21 +106,18 @@ jobs:
           cd "$DIR"
           
           chmod +x gradlew
-          
-          # Lancement de la compilation
           ./gradlew assembleDebug --stacktrace
           
-          # Préparation de l'exportation APK
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           find . -name "*.apk" -exec cp -v {} "$GITHUB_WORKSPACE/output_apk/" \;
 
-      # 4. Vérification de la présence de l'APK
+      # 5. Vérification
       - name: Vérifier la présence de l'APK
         run: |
           echo "Contenu du dossier d'exportation :"
           ls -la "$GITHUB_WORKSPACE/output_apk"
 
-      # 5. Téléverser l'APK généré
+      # 6. Téléversement de l'artifact
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
