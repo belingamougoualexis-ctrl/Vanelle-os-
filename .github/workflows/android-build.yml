@@ -15,7 +15,7 @@ jobs:
       - name: Checkout du projet
         uses: actions/checkout@v4
 
-      # 1. Décompresser le ZIP en premier pour extraire les fichiers du projet
+      # 1. Décompresser le ZIP en premier s'il existe
       - name: Décompresser l'archive ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
@@ -31,16 +31,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Application des corrections dans le code Kotlin via un script Python sécurisé
-      - name: Corriger le code Kotlin
+      # 3. Auto-corrections du code Kotlin et injection des dépendances manquantes
+      - name: Corriger le code et configurer Gradle
         run: |
           python3 - << 'EOF'
           import os, re, glob
 
-          def find_files(name):
-              return glob.glob(f"./**/{name}", recursive=True)
+          def find_files(pattern):
+              return glob.glob(f"./**/{pattern}", recursive=True)
 
-          # Fix 1: ContactsRepository.kt (Séquences d'échappement)
+          # --- Fix 1: ContactsRepository.kt (Séquences d'échappement) ---
           for path in find_files("ContactsRepository.kt"):
               print(f"Nettoyage des échappements dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
@@ -49,7 +49,7 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(content)
 
-          # Fix 2: WakeWordService.kt (Syntaxe et imports)
+          # --- Fix 2: WakeWordService.kt (Syntaxe et imports) ---
           for path in find_files("WakeWordService.kt"):
               print(f"Correction des imports dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
@@ -68,7 +68,7 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
 
-          # Fix 3: Fragments.kt (Variables en doublon)
+          # --- Fix 3: Fragments.kt (Variables en doublon) ---
           for path in find_files("Fragments.kt"):
               print(f"Résolution des variables en doublon dans : {path}")
               with open(path, "r", encoding="utf-8") as f:
@@ -90,9 +90,24 @@ jobs:
 
               with open(path, "w", encoding="utf-8") as f:
                   f.writelines(new_lines)
+
+          # --- Fix 4: Injection automatique de security-crypto pour MasterKey ---
+          gradle_files = find_files("build.gradle") + find_files("build.gradle.kts")
+          for path in gradle_files:
+              if "app" in path:
+                  print(f"Ajout de la dépendance Crypto dans : {path}")
+                  with open(path, "r", encoding="utf-8") as f:
+                      content = f.read()
+                  
+                  if "androidx.security:security-crypto" not in content:
+                      dep = '\n    implementation("androidx.security:security-crypto:1.1.0-alpha06")\n'
+                      if "dependencies {" in content:
+                          content = content.replace("dependencies {", "dependencies {" + dep, 1)
+                          with open(path, "w", encoding="utf-8") as f:
+                              f.write(content)
           EOF
 
-      # 4. Lancement de Gradle
+      # 4. Lancement de la compilation Gradle
       - name: Compiler avec Gradle
         run: |
           GRADLEW_PATH=$(find . -name "gradlew" -not -path "*/.*" | head -n 1)
@@ -111,13 +126,13 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/output_apk"
           find . -name "*.apk" -exec cp -v {} "$GITHUB_WORKSPACE/output_apk/" \;
 
-      # 5. Vérification
+      # 5. Vérification du fichier APK généré
       - name: Vérifier la présence de l'APK
         run: |
           echo "Contenu du dossier d'exportation :"
           ls -la "$GITHUB_WORKSPACE/output_apk"
 
-      # 6. Téléversement de l'artifact
+      # 6. Téléversement de l'APK dans GitHub Actions
       - name: Téléverser l'APK
         uses: actions/upload-artifact@v4
         with:
