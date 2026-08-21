@@ -38,24 +38,23 @@ jobs:
 
       - name: 5. Compilation de l'APK Release
         run: |
-          if [ ! -f "app/build.gradle.kts" ]; then
-            echo "ERREUR : Le fichier app/build.gradle.kts n'existe pas."
+          # Vérification flexible de la présence de build.gradle ou build.gradle.kts
+          if [ ! -f "app/build.gradle.kts" ] && [ ! -f "app/build.gradle" ] && [ ! -f "build.gradle.kts" ] && [ ! -f "build.gradle" ]; then
+            echo "ERREUR : Aucun fichier build.gradle(.kts) trouvé à la racine ou dans app/."
+            echo "Affiche la structure du dépôt :"
+            ls -R
             exit 1
           fi
 
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --stacktrace
+          ./gradlew assembleRelease --stacktrace
 
       - name: 6. Alignement et Signature de l'APK
         run: |
-          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-
-          if [ ! -f "$UNSIGNED_APK" ]; then
-            UNSIGNED_APK=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
-          fi
+          UNSIGNED_APK=$(find . -path "*/build/outputs/apk/release/*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun fichier APK trouvé dans app/build/outputs/apk/release/"
+            echo "Erreur : Aucun fichier APK trouvé dans les dossiers de sortie release."
             exit 1
           fi
 
