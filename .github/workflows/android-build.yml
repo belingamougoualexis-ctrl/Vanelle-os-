@@ -2,34 +2,61 @@ name: Build VanelleOS APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Cloner le dépôt
+      - name: Checkout du projet
         uses: actions/checkout@v4
 
-      - name: Installer JDK 17
+      - name: Vérifier la structure du projet
+        run: |
+          echo "Répertoire actuel :"
+          pwd
+
+          echo "Contenu du projet :"
+          ls -la
+
+          echo "Fichiers Gradle recherchés :"
+          find . -maxdepth 3 \( -name "settings.gradle*" -o -name "build.gradle*" \) -print
+
+      - name: Installer Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Installer Gradle
+      - name: Installer Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Compiler l'APK debug
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Vérifier Gradle
+        run: |
+          gradle --version
+
+      - name: Compiler VanelleOS
+        run: |
+          gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Vérifier que l'APK existe
+        run: |
+          ls -lh app/build/outputs/apk/debug/
+          test -f app/build/outputs/apk/debug/app-debug.apk
 
       - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
           name: VanelleOS-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
