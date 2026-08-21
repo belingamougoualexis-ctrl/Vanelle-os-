@@ -47,10 +47,9 @@ jobs:
             -keypass automatch123 \
             -dname "CN=GitHub Actions, OU=Build, O=Auto, L=City, S=State, C=US"
 
-      - name: 6. Compilation de l'APK Release
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
+                  - name: 6. Compilation de l'APK Release
+        run: gradle assembleRelease --stacktrace
+
 
       - name: 7. Alignement et Signature de l'APK
         run: |
