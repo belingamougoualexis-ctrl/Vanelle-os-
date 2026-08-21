@@ -20,7 +20,7 @@ jobs:
           TARGET_ZIP="VanelleOS_PRO_FINAL_AUDITED.zip"
 
           if [ ! -f "$TARGET_ZIP" ]; then
-            echo "ERREUR : Le fichier $TARGET_ZIP est introuvable à la racine."
+            echo "ERREUR : Le fichier $TARGET_ZIP est introuvable."
             exit 1
           fi
 
@@ -37,29 +37,22 @@ jobs:
 
       - name: 3. Injection des règles ProGuard/R8
         run: |
+          mkdir -p app
           PROGUARD_FILE="app/proguard-rules.pro"
           
-          # Création du fichier de règles s'il n'existe pas
-          mkdir -p app
-          touch "$PROGUARD_FILE"
-
-          # Ajout des règles pour ignorer les avertissements JSR-305/Tink
           echo "" >> "$PROGUARD_FILE"
-          echo "# Correctif automatique R8 injecté par CI" >> "$PROGUARD_FILE"
+          echo "# Correctif R8" >> "$PROGUARD_FILE"
           echo "-dontwarn javax.annotation.**" >> "$PROGUARD_FILE"
           echo "-dontwarn javax.annotation.concurrent.**" >> "$PROGUARD_FILE"
           echo "-keep class com.google.crypto.tink.** { *; }" >> "$PROGUARD_FILE"
 
-          echo "Règles ProGuard injectées dans $PROGUARD_FILE :"
-          cat "$PROGUARD_FILE"
-
       - name: 4. Configuration de Java (JDK 17)
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 5. Installation de Gradle sur le serveur GitHub
+      - name: 5. Installation de Gradle
         uses: gradle/actions/setup-gradle@v3
 
       - name: 6. Génération automatique du Keystore
@@ -80,7 +73,6 @@ jobs:
             chmod +x gradlew
             ./gradlew assembleRelease --stacktrace
           else
-            echo "Wrapper gradlew non trouvé, utilisation de gradle système..."
             gradle assembleRelease --stacktrace
           fi
 
@@ -89,11 +81,11 @@ jobs:
           UNSIGNED_APK=$(find . -path "*/build/outputs/apk/release/*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun fichier APK trouvé après compilation."
+            echo "Erreur : Aucun fichier APK trouvé après la compilation."
             exit 1
           fi
 
-          echo "APK non signé trouvé : $UNSIGNED_APK"
+          echo "APK trouvé : $UNSIGNED_APK"
 
           ${ANDROID_SDK_ROOT}/build-tools/34.0.0/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
 
@@ -104,9 +96,16 @@ jobs:
             --ks-key-alias autokey \
             --out app-release-signed.apk app-aligned.apk
 
-      - name: 9. Publication de l'APK final
+      - name: 9. Vérification du fichier signé généré
+        run: |
+          if [ ! -f "app-release-signed.apk" ]; then
+            echo "ERREUR : L'APK signé n'a pas été généré correctement."
+            exit 1
+          fi
+          echo "Fichier app-release-signed.apk prêt pour le téléchargement."
+
+      - name: 10. Publication de l'APK final
         uses: actions/upload-artifact@v4
         with:
           name: application-release-signee
           path: app-release-signed.apk
-          if-no-files-found: error
