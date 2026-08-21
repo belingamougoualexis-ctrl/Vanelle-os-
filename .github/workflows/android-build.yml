@@ -47,12 +47,17 @@ jobs:
             -keypass automatch123 \
             -dname "CN=GitHub Actions, OU=Build, O=Auto, L=City, S=State, C=US"
 
-      - name: 6. Compilation de l'APK Release sans wrapper
+      - name: Diagnostic - Lister la structure des dossiers
+        run: |
+          echo "=== Structure actuelle du dépôt ==="
+          find . -maxdepth 3 -not -path '*/.*'
+
+      - name: 6. Compilation de l'APK Release
         run: gradle assembleRelease --stacktrace
 
       - name: 7. Alignement et Signature de l'APK
         run: |
-          UNSIGNED_APK=$(find app/build/outputs/apk/release/ -name "*-unsigned.apk" -o -name "*-release.apk" | head -n 1)
+          UNSIGNED_APK=$(find . -name "*-unsigned.apk" -o -name "*-release.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
             echo "Erreur : Aucun fichier APK trouvé après la compilation."
