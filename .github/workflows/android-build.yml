@@ -33,8 +33,21 @@ jobs:
             -keypass automatch123 \
             -dname "CN=GitHub Actions, OU=Build, O=Auto, L=City, S=State, C=US"
 
-      - name: 4. Compilation de l'APK Release avec Gradle
-        run: gradle assembleRelease --stacktrace
+      - name: 4. Compilation de l'APK Release
+        run: |
+          # Trouver le dossier contenant settings.gradle ou build.gradle
+          GRADLE_DIR=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1 | xargs dirname)
+          echo "Projet Gradle détecté dans le dossier : $GRADLE_DIR"
+          
+          cd "$GRADLE_DIR"
+          
+          # Utiliser gradlew si présent, sinon gradle global
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleRelease --stacktrace
+          else
+            gradle assembleRelease --stacktrace
+          fi
 
       - name: 5. Alignement et Signature de l'APK
         run: |
