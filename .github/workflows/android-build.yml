@@ -78,3 +78,8 @@ jobs:
           name: VanelleOS-Release-APK
           path: VanelleOS-release-signed.apk
           if-no-files-found: error
+      - name: 6. Compilation de l'APK Release
+        working-directory: ./ton-sous-dossier # Remplace par le nom exact du dossier si nécessaire
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace
