@@ -1,96 +1,45 @@
-name: Build VanelleOS APK
+name: Build and Sign Release APK
 
 on:
   push:
     branches:
       - main
       - master
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-sign:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Télécharger le projet
-        uses: actions/checkout@v4
+      - name: Checkout du code
+        uses: actions/checkout@v4[span_0](start_span)[span_0](end_span)
 
-      - name: Installer Java 17
-        uses: actions/setup-java@v4
+      - name: Configuration de Java (JDK 17)
+        uses: actions/setup-java@v4[span_1](start_span)[span_1](end_span)
         with:
-          distribution: temurin
-          java-version: '17'
+          distribution: 'zulu[span_2](start_span)'[span_2](end_span)
+          java-version: '17[span_3](start_span)'[span_3](end_span)
+          cache: 'gradle[span_4](start_span)'[span_4](end_span)
 
-      - name: Trouver le projet Gradle
-        id: gradle_project
-        shell: bash
-        run: |
-          echo "Recherche de settings.gradle.kts..."
+      - name: Rendre Gradle exécutable
+        run: chmod +x ./gradlew[span_5](start_span)[span_5](end_span)
 
-          GRADLE_DIR=$(find "$GITHUB_WORKSPACE" \
-            -name "settings.gradle.kts" \
-            -not -path "*/.gradle/*" \
-            -print -quit \
-            | xargs -r dirname)
+      - name: Build de l'APK Unsigned avec Gradle
+        run: ./gradlew assembleRelease --stacktrace
 
-          if [ -z "$GRADLE_DIR" ]; then
-            echo "ERREUR : settings.gradle.kts introuvable."
-            echo "Contenu du workspace :"
-            find "$GITHUB_WORKSPACE" -maxdepth 4 -type f | sort
-            exit 1
-          fi
-
-          echo "Projet Gradle trouvé dans : $GRADLE_DIR"
-
-          echo "gradle_dir=$GRADLE_DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Installer Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Signer l'APK Release
+        id: sign_app
+        uses: radditud/android-signed-apk@v1
         with:
-          gradle-version: '8.10.2'
-
-      - name: Vérifier le projet
-        working-directory: ${{ steps.gradle_project.outputs.gradle_dir }}
-        run: |
-          echo "Répertoire Gradle :"
-          pwd
-
-          echo ""
-          echo "Fichiers :"
-          ls -la
-
-          echo ""
-          echo "Settings Gradle :"
-          cat settings.gradle.kts
-
-      - name: Compiler VanelleOS
-        working-directory: ${{ steps.gradle_project.outputs.gradle_dir }}
-        run: |
-          gradle :app:assembleDebug \
-            --no-daemon \
-            --stacktrace \
-            --console=plain
-
-      - name: Vérifier l'APK
-        working-directory: ${{ steps.gradle_project.outputs.gradle_dir }}
-        run: |
-          echo "Recherche de l'APK..."
-
-          if [ ! -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
-            echo "ERREUR : APK non trouvé."
-            find app/build -type f 2>/dev/null | sort || true
-            exit 1
-          fi
-
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Télécharger l'APK
-        uses: actions/upload-artifact@v4
+          keystoreBase64: ${{ secrets.KEYSTORE_BASE64 }}
+          alias: ${{ secrets.SIGNING_KEY_ALIAS }}
+          storePassword: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        
+      - name: Upload de l'APK Signé en Artifact
+        uses: actions/upload-artifact@v4[span_6](start_span)[span_6](end_span)
         with:
-          name: VanelleOS-debug-apk
-          path: ${{ steps.gradle_project.outputs.gradle_dir }}/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          name: app-release-signed
+          path: ${{ steps.sign_app.outputs.signedApkPath }}
+          if-no-files-found: error[span_7](start_span)[span_7](end_span)
