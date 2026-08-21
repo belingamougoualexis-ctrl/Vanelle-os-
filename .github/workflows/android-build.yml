@@ -38,32 +38,28 @@ jobs:
 
       - name: 5. Compilation de l'APK Release
         run: |
-          # Recherche du dossier contenant le fichier build.gradle
-          GRADLE_FILE=$(find . -name "build.gradle*" | head -n 1)
-
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERREUR : Aucun fichier build.gradle trouvé dans le dépôt."
+          if [ ! -f "app/build.gradle.kts" ]; then
+            echo "ERREUR : Le fichier app/build.gradle.kts n'existe pas."
             exit 1
           fi
 
-          GRADLE_DIR=$(dirname "$GRADLE_FILE")
-          echo "Dossier du projet trouvé : $GRADLE_DIR"
-          
-          cd "$GRADLE_DIR"
-          
-          # Utilisation directe du Gradle installé par GitHub
-          gradle assembleRelease --stacktrace
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --stacktrace
 
       - name: 6. Alignement et Signature de l'APK
         run: |
-          UNSIGNED_APK=$(find . -path "*/build/outputs/apk/release/*.apk" | head -n 1)
+          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
 
-          if [ -z "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun fichier APK trouvé dans le dossier build."
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          fi
+
+          if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
+            echo "Erreur : Aucun fichier APK trouvé dans app/build/outputs/apk/release/"
             exit 1
           fi
 
-          echo "APK trouvé : $UNSIGNED_APK"
+          echo "APK non signé trouvé : $UNSIGNED_APK"
 
           ${ANDROID_SDK_ROOT}/build-tools/34.0.0/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
 
