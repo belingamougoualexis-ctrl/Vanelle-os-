@@ -40,10 +40,10 @@ jobs:
           mkdir -p app
           PROGUARD_FILE="app/proguard-rules.pro"
           
-          echo "" >> "$PROGUARD_FILE"
-          echo "# Correctif R8" >> "$PROGUARD_FILE"
+          echo "# Correctif global R8" >> "$PROGUARD_FILE"
           echo "-dontwarn javax.annotation.**" >> "$PROGUARD_FILE"
-          echo "-dontwarn javax.annotation.concurrent.**" >> "$PROGUARD_FILE"
+          echo "-dontwarn com.google.api.client.**" >> "$PROGUARD_FILE"
+          echo "-dontwarn org.joda.time.**" >> "$PROGUARD_FILE"
           echo "-keep class com.google.crypto.tink.** { *; }" >> "$PROGUARD_FILE"
 
       - name: 4. Configuration de Java (JDK 17)
@@ -96,16 +96,9 @@ jobs:
             --ks-key-alias autokey \
             --out app-release-signed.apk app-aligned.apk
 
-      - name: 9. Vérification du fichier signé généré
-        run: |
-          if [ ! -f "app-release-signed.apk" ]; then
-            echo "ERREUR : L'APK signé n'a pas été généré correctement."
-            exit 1
-          fi
-          echo "Fichier app-release-signed.apk prêt pour le téléchargement."
-
-      - name: 10. Publication de l'APK final
+      - name: 9. Publication de l'APK final
         uses: actions/upload-artifact@v4
         with:
           name: application-release-signee
           path: app-release-signed.apk
+          if-no-files-found: error
