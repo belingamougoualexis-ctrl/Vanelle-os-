@@ -15,7 +15,7 @@ jobs:
       - name: 1. Récupération du code source
         uses: actions/checkout@v4
 
-      - name: 2. Décompression des archives ZIP
+      - name: 2. Décompression des archives ZIP (Restauration des mascottes)
         run: |
           ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
           if [ -n "$ZIP_FILES" ]; then
@@ -25,16 +25,32 @@ jobs:
             done
           fi
 
-      - name: 2.5 Corriger AndroidX, ressources et erreurs Kotlin
+      - name: 2.5 Correction automatique et préservation des mascottes
         run: |
-          # Activation d'AndroidX
+          # 1. Activation globale d'AndroidX
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
 
-          # Nettoyage des ressources cassées
-          rm -rf app/src/main/res/mipmap-anydpi-v26
+          # 2. Création du dossier drawable s'il n'existe pas
+          mkdir -p app/src/main/res/drawable
 
-          # Correction de WebSearchHelper.kt
+          # 3. Génération d'une ressource de secours si ic_launcher_foreground manque
+          if [ ! -f "app/src/main/res/drawable/ic_launcher_foreground.xml" ] && [ ! -f "app/src/main/res/drawable/ic_launcher_foreground.png" ]; then
+            echo "Création de la ressource ic_launcher_foreground de secours..."
+            cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
+            <vector xmlns:android="http://schemas.android.com/apk/res/android"
+                android:width="108dp"
+                android:height="108dp"
+                android:viewportWidth="108"
+                android:viewportHeight="108">
+                <path
+                    android:fillColor="#FF6200EE"
+                    android:pathData="M37,29L61,29L61,35L37,35Z M37,43L71,43L71,49L37,49Z M37,57L71,57L71,63L37,63Z" />
+            </vector>
+EOF
+          fi
+
+          # 4. Correction de WebSearchHelper.kt
           if [ -f "app/src/main/java/com/vanelle/os/WebSearchHelper.kt" ]; then
             sed -i 's/= return /{ /g' app/src/main/java/com/vanelle/os/WebSearchHelper.kt || true
           fi
@@ -45,7 +61,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Compilation de l'APK (Contournement R8 / Lint)
+      - name: 4. Compilation de l'APK
         run: |
           GRADLE_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
 
