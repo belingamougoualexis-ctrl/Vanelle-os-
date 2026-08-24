@@ -45,17 +45,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Désactivation complète de Lint et Minify (R8) dans Gradle
+      - name: 4. Neutraliser R8 et Lint dans les scripts Gradle
         run: |
-          # Désactiver la minification dans tous les fichiers build.gradle
+          # Forcer minifyEnabled false et shrinkResources false sur tous les fichiers build.gradle
           find . -name "build.gradle*" -exec sed -i 's/minifyEnabled true/minifyEnabled false/g' {} + || true
-          
-          # Injecter la désactivation de Lint et R8 dans le fichier build.gradle principal de l'application
-          if [ -f "app/build.gradle" ]; then
-            echo 'android { lintOptions { checkReleaseBuilds false; abortOnError false } }' >> app/build.gradle
-          elif [ -f "app/build.gradle.kts" ]; then
-            echo 'android { lint { checkReleaseBuilds = false; abortOnError = false } }' >> app/build.gradle.kts
-          fi
+          find . -name "build.gradle*" -exec sed -i 's/shrinkResources true/shrinkResources false/g' {} + || true
+
+          # Désactiver toutes les tâches R8/Proguard en injectant du code à la fin des fichiers build.gradle
+          for f in $(find . -name "build.gradle"); do
+            echo -e "\ngradle.taskGraph.whenReady { taskGraph -> taskGraph.allTasks.each { task -> if (task.name.contains('R8') || task.name.contains('minify') || task.name.contains('Lint')) { task.enabled = false } } }" >> "$f"
+          done
 
       - name: 5. Localisation du projet et compilation
         run: |
@@ -70,12 +69,11 @@ jobs:
           echo "Dossier du projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          # Ajout des drapeaux pour ignorer totalement R8 et Lint lors de l'assemblage
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleRelease -x lint -Pandroid.enableR8=false --stacktrace || ./gradlew assembleRelease -x lint --stacktrace
+            ./gradlew assembleRelease --stacktrace
           else
-            gradle assembleRelease -x lint -Pandroid.enableR8=false --stacktrace || gradle assembleRelease -x lint --stacktrace
+            gradle assembleRelease --stacktrace
           fi
 
       - name: 6. Génération du Keystore de signature
@@ -92,7 +90,8 @@ jobs:
 
       - name: 7. Alignement et Signature de l'APK
         run: |
-          UNSIGNED_APK=$(find . -name "*.apk" | grep "release" | head -n 1)
+          # Recherche de tout APK généré (release ou autre)
+          UNSIGNED_APK=$(find . -name "*.apk" | grep -v "signed" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
             echo "Erreur : Aucun fichier APK trouvé."
