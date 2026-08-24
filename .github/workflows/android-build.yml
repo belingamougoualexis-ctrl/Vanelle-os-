@@ -32,7 +32,7 @@ jobs:
 
           mkdir -p app/src/main/res/drawable
 
-          if [ ! -f "app/src/main/res/drawable/ic_launcher_foreground.xml" ] && [ ! -f "app/src/main/res/drawable/ic_launcher_foreground.png" ]; then
+          if [ ! -f "app/src/main/res/drawable/ic_launcher_foreground.xml" ] && [ ! -f "app/src/main/res/drawable/ic_launcher_foreground.png" ] && [ ! -f "app/src/main/res/drawable-nodpi/ic_launcher_foreground.png" ]; then
             echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#FF6200EE" android:pathData="M37,29L61,29L61,35L37,35Z M37,43L71,43L71,49L37,49Z M37,57L71,57L71,63L37,63Z"/></vector>' > app/src/main/res/drawable/ic_launcher_foreground.xml
           fi
 
@@ -59,11 +59,14 @@ jobs:
           echo "Dossier du projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
+          # CORRIGÉ : "assembleDebug" compilait les 2 variantes (modern + legacy) sans
+          # distinction. "assembleModernDebug" cible explicitement la variante avec l'IA
+          # locale (Llama) — c'est celle qu'il faut installer sur un appareil moderne.
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleModernDebug --stacktrace
           else
-            gradle assembleDebug --stacktrace
+            gradle assembleModernDebug --stacktrace
           fi
 
       - name: Génération du Keystore de signature
@@ -80,12 +83,17 @@ jobs:
 
       - name: Alignement et Signature de l'APK
         run: |
-          UNSIGNED_APK=$(find . -name "*.apk" | head -n 1)
+          # CORRIGÉ : ne cherche plus "le premier .apk trouvé" (qui tombait sur la
+          # variante legacy sans IA) mais spécifiquement l'APK du dossier "modern".
+          UNSIGNED_APK=$(find . -path "*/outputs/apk/modern/*" -name "*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun fichier APK trouvé."
+            echo "Erreur : Aucun APK 'modern' trouvé. Vérifie que assembleModernDebug a bien produit un résultat."
+            find . -name "*.apk"
             exit 1
           fi
+
+          echo "APK sélectionné : $UNSIGNED_APK"
 
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
 
