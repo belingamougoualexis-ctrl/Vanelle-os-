@@ -25,6 +25,15 @@ jobs:
             done
           fi
 
+      - name: 2.5 Corriger la configuration AndroidX et les ressources d'icônes
+        run: |
+          # 1. Activation globale d'AndroidX
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
+
+          # 2. Suppression des ressources d'icônes adaptatives cassées
+          rm -rf app/src/main/res/mipmap-anydpi-v26
+
       - name: 3. Configuration de Java (JDK 17)
         uses: actions/setup-java@v4
         with:
@@ -33,7 +42,6 @@ jobs:
 
       - name: 4. Configuration des règles ProGuard / R8
         run: |
-          # Injection directe des règles R8 pour corriger la minification
           RULES='
           -dontwarn javax.annotation.**
           -dontwarn javax.annotation.concurrent.**
@@ -44,10 +52,8 @@ jobs:
           -keep class com.google.crypto.tink.** { *; }
           '
 
-          # Appliquer ces règles à tous les fichiers proguard-rules.pro trouvés
           find . -name "proguard-rules.pro" -exec sh -c 'echo "$1" >> "$2"' _ "$RULES" {} \;
 
-          # Si aucun fichier proguard n'existe encore, en créer un dans app/
           if ! find . -name "proguard-rules.pro" | grep -q .; then
             mkdir -p app
             echo "$RULES" > app/proguard-rules.pro
