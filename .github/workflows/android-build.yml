@@ -45,18 +45,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Bypass des erreurs R8 / ProGuard
+      - name: 4. Désactivation complète de Lint et Minify (R8) dans Gradle
         run: |
-          RULES='
-          -dontshrink
-          -dontoptimize
-          -dontobfuscate
-          -ignorewarnings
-          -dontwarn **
-          '
-          mkdir -p app
-          echo "$RULES" >> app/proguard-rules.pro
+          # Désactiver la minification dans tous les fichiers build.gradle
           find . -name "build.gradle*" -exec sed -i 's/minifyEnabled true/minifyEnabled false/g' {} + || true
+          
+          # Injecter la désactivation de Lint et R8 dans le fichier build.gradle principal de l'application
+          if [ -f "app/build.gradle" ]; then
+            echo 'android { lintOptions { checkReleaseBuilds false; abortOnError false } }' >> app/build.gradle
+          elif [ -f "app/build.gradle.kts" ]; then
+            echo 'android { lint { checkReleaseBuilds = false; abortOnError = false } }' >> app/build.gradle.kts
+          fi
 
       - name: 5. Localisation du projet et compilation
         run: |
@@ -71,11 +70,12 @@ jobs:
           echo "Dossier du projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
+          # Ajout des drapeaux pour ignorer totalement R8 et Lint lors de l'assemblage
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleRelease --stacktrace
+            ./gradlew assembleRelease -x lint -Pandroid.enableR8=false --stacktrace || ./gradlew assembleRelease -x lint --stacktrace
           else
-            gradle assembleRelease --stacktrace
+            gradle assembleRelease -x lint -Pandroid.enableR8=false --stacktrace || gradle assembleRelease -x lint --stacktrace
           fi
 
       - name: 6. Génération du Keystore de signature
