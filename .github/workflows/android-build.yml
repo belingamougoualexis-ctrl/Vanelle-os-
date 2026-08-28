@@ -15,6 +15,14 @@ jobs:
       - name: Récupération du code source
         uses: actions/checkout@v4
 
+      - name: Libération de l'espace disque (Fix Crash Émulateur)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          df -h
+
       - name: Décompression des archives ZIP
         run: |
           ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
@@ -72,18 +80,17 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm-rules.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
 
-      - name: Exécution des Tests sur Émulateur Android (Toutes fonctionnalités)
+      - name: Exécution des Tests sur Émulateur Android
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 30
           target: google_apis
           arch: x86_64
           profile: Pixel_6
           force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: |
-            # Octroi automatique des permissions requises pour Vanelle OS avant les tests UI
             adb shell pm grant com.vanelle.os android.permission.RECORD_AUDIO || true
             adb shell pm grant com.vanelle.os android.permission.POST_NOTIFICATIONS || true
             adb shell appops set com.vanelle.os SYSTEM_ALERT_WINDOW allow || true
@@ -107,12 +114,10 @@ jobs:
           UNSIGNED_APK=$(find . -path "*/outputs/apk/modern/*" -name "*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun APK 'modern' trouvé. Vérifie que assembleModernDebug a bien produit un résultat."
+            echo "Erreur : Aucun APK 'modern' trouvé."
             find . -name "*.apk"
             exit 1
           fi
-
-          echo "APK sélectionné : $UNSIGNED_APK"
 
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
 
