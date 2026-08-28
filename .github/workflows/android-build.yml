@@ -25,10 +25,17 @@ jobs:
             done
           fi
 
-      - name: Configuration Gradle et correction des fichiers
+      - name: Configuration Gradle, MinSDK et correction des fichiers
         run: |
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
+
+          # CORRECTION DU MINSDK : Force la valeur à 24 pour la compatibilité avec llamacpp-kotlin
+          BUILD_GRADLE=$(find . -name "build.gradle*" | grep "app" | head -n 1)
+          if [ -n "$BUILD_GRADLE" ]; then
+            sed -i 's/minSdk = 23/minSdk = 24/g' "$BUILD_GRADLE" || true
+            sed -i 's/minSdkVersion 23/minSdkVersion 24/g' "$BUILD_GRADLE" || true
+          fi
 
           mkdir -p app/src/main/res/drawable
 
