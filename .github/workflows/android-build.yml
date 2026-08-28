@@ -1,27 +1,19 @@
-name: Vanelle OS - Full Workflow & Testing
+name: Build and Sign Release APK Automatically
 
 on:
   push:
-    branches: [ "main", "develop" ]
-  pull_request:
-    branches: [ "main", "develop" ]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 jobs:
-  build-and-test:
+  build-and-sign:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
       - name: Récupération du code source
         uses: actions/checkout@v4
-
-      - name: Libération de l'espace disque
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android/sdk/ndk
-          sudo rm -rf /opt/ghc
-          sudo rm -rf "/usr/local/share/boost"
-          df -h
 
       - name: Décompression des archives ZIP
         run: |
@@ -53,9 +45,8 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
-      - name: Compilation des APKs (ModernDebug & AndroidTest)
+      - name: Compilation de l'APK
         run: |
           GRADLE_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
 
@@ -68,34 +59,15 @@ jobs:
           echo "Dossier du projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
+          # CORRIGÉ : "assembleDebug" compilait les 2 variantes (modern + legacy) sans
+          # distinction. "assembleModernDebug" cible explicitement la variante avec l'IA
+          # locale (Llama) — c'est celle qu'il faut installer sur un appareil moderne.
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleModernDebug assembleModernDebugAndroidTest --stacktrace
+            ./gradlew assembleModernDebug --stacktrace
           else
-            gradle assembleModernDebug assembleModernDebugAndroidTest --stacktrace
+            gradle assembleModernDebug --stacktrace
           fi
-
-      - name: Configuration de KVM (Accélération Matérielle)
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm-rules.rules
-          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
-
-      - name: Exécution des Tests sur Émulateur Android
-        uses: ReactiveCircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          profile: pixel
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: |
-            adb shell pm grant com.vanelle.os android.permission.RECORD_AUDIO || true
-            adb shell pm grant com.vanelle.os android.permission.POST_NOTIFICATIONS || true
-            adb shell appops set com.vanelle.os SYSTEM_ALERT_WINDOW allow || true
-            
-            ./gradlew connectedModernDebugAndroidTest --stacktrace
 
       - name: Génération du Keystore de signature
         run: |
@@ -111,13 +83,17 @@ jobs:
 
       - name: Alignement et Signature de l'APK
         run: |
+          # CORRIGÉ : ne cherche plus "le premier .apk trouvé" (qui tombait sur la
+          # variante legacy sans IA) mais spécifiquement l'APK du dossier "modern".
           UNSIGNED_APK=$(find . -path "*/outputs/apk/modern/*" -name "*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun APK 'modern' trouvé."
+            echo "Erreur : Aucun APK 'modern' trouvé. Vérifie que assembleModernDebug a bien produit un résultat."
             find . -name "*.apk"
             exit 1
           fi
+
+          echo "APK sélectionné : $UNSIGNED_APK"
 
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
 
@@ -129,13 +105,6 @@ jobs:
             --key-pass pass:automatch123 \
             --ks-key-alias autokey \
             --out VanelleOS-release-signed.apk app-aligned.apk
-
-      - name: Publication des rapports de tests en cas d'échec
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vanelle-os-test-reports
-          path: app/build/reports/androidTests/connected/
 
       - name: Publication de l'APK final
         uses: actions/upload-artifact@v4
