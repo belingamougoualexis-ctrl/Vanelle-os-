@@ -15,7 +15,7 @@ jobs:
       - name: Récupération du code source
         uses: actions/checkout@v4
 
-      - name: Libération de l'espace disque (Fix Crash Émulateur)
+      - name: Libération de l'espace disque
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android/sdk/ndk
@@ -86,7 +86,7 @@ jobs:
           api-level: 30
           target: google_apis
           arch: x86_64
-          profile: Pixel_6
+          profile: pixel
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
