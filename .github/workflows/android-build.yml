@@ -1,15 +1,15 @@
-name: Build and Sign Release APK Automatically
+name: Vanelle OS - Full Workflow & Testing
 
 on:
   push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
 
 jobs:
-  build-and-sign:
+  build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Récupération du code source
@@ -45,8 +45,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
-      - name: Compilation de l'APK
+      - name: Compilation des APKs (ModernDebug & AndroidTest)
         run: |
           GRADLE_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
 
@@ -59,15 +60,35 @@ jobs:
           echo "Dossier du projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          # CORRIGÉ : "assembleDebug" compilait les 2 variantes (modern + legacy) sans
-          # distinction. "assembleModernDebug" cible explicitement la variante avec l'IA
-          # locale (Llama) — c'est celle qu'il faut installer sur un appareil moderne.
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleModernDebug --stacktrace
+            ./gradlew assembleModernDebug assembleModernDebugAndroidTest --stacktrace
           else
-            gradle assembleModernDebug --stacktrace
+            gradle assembleModernDebug assembleModernDebugAndroidTest --stacktrace
           fi
+
+      - name: Configuration de KVM (Accélération Matérielle)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm-rules.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+
+      - name: Exécution des Tests sur Émulateur Android (Toutes fonctionnalités)
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: Pixel_6
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            # Octroi automatique des permissions requises pour Vanelle OS avant les tests UI
+            adb shell pm grant com.vanelle.os android.permission.RECORD_AUDIO || true
+            adb shell pm grant com.vanelle.os android.permission.POST_NOTIFICATIONS || true
+            adb shell appops set com.vanelle.os SYSTEM_ALERT_WINDOW allow || true
+            
+            ./gradlew connectedModernDebugAndroidTest --stacktrace
 
       - name: Génération du Keystore de signature
         run: |
@@ -83,8 +104,6 @@ jobs:
 
       - name: Alignement et Signature de l'APK
         run: |
-          # CORRIGÉ : ne cherche plus "le premier .apk trouvé" (qui tombait sur la
-          # variante legacy sans IA) mais spécifiquement l'APK du dossier "modern".
           UNSIGNED_APK=$(find . -path "*/outputs/apk/modern/*" -name "*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
@@ -105,6 +124,13 @@ jobs:
             --key-pass pass:automatch123 \
             --ks-key-alias autokey \
             --out VanelleOS-release-signed.apk app-aligned.apk
+
+      - name: Publication des rapports de tests en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vanelle-os-test-reports
+          path: app/build/reports/androidTests/connected/
 
       - name: Publication de l'APK final
         uses: actions/upload-artifact@v4
