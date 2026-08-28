@@ -13,7 +13,9 @@ jobs:
     name: Build VanelleOS APK
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # nécessaire pour publier une GitHub Release sur les tags
+      contents: write
+    env:
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -46,13 +48,8 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # --- Signature release avec le keystore permanent (secrets du depot) ---
-      # Ces 4 secrets sont crees UNE SEULE FOIS dans Settings -> Secrets and variables
-      # -> Actions, puis reutilises indefiniment pour que chaque APK release garde la
-      # meme signature (obligatoire pour que les mises a jour s'installent par-dessus
-      # une version deja installee sur un telephone).
       - name: Decode release keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_KEYSTORE == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
@@ -60,9 +57,8 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/vanelle-release.jks"
 
       - name: Build signed release APK
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_KEYSTORE == 'true'
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           VANELLE_KEYSTORE_PATH: ${{ format('{0}/keystore/vanelle-release.jks', runner.temp) }}
           VANELLE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           VANELLE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -72,7 +68,7 @@ jobs:
           else gradle assembleRelease --stacktrace; fi
 
       - name: Build unsigned release APK (fallback, no keystore secret configured yet)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' }}
+        if: env.HAS_KEYSTORE != 'true'
         run: |
           if [ -f "./gradlew" ]; then ./gradlew assembleRelease --stacktrace
           else gradle assembleRelease --stacktrace; fi
