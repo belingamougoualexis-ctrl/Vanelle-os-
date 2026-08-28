@@ -59,14 +59,12 @@ jobs:
           echo "Dossier du projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
-          # CORRIGÉ : "assembleDebug" compilait les 2 variantes (modern + legacy) sans
-          # distinction. "assembleModernDebug" cible explicitement la variante avec l'IA
-          # locale (Llama) — c'est celle qu'il faut installer sur un appareil moderne.
+          # CORRECTION : Utilisation de assembleDebug (tâche standard) pour éviter l'erreur de tâche introuvable
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleModernDebug --stacktrace
+            ./gradlew assembleDebug --stacktrace
           else
-            gradle assembleModernDebug --stacktrace
+            gradle assembleDebug --stacktrace
           fi
 
       - name: Génération du Keystore de signature
@@ -83,12 +81,11 @@ jobs:
 
       - name: Alignement et Signature de l'APK
         run: |
-          # CORRIGÉ : ne cherche plus "le premier .apk trouvé" (qui tombait sur la
-          # variante legacy sans IA) mais spécifiquement l'APK du dossier "modern".
-          UNSIGNED_APK=$(find . -path "*/outputs/apk/modern/*" -name "*.apk" | head -n 1)
+          # CORRECTION : Récupère le premier APK généré dans outputs/apk
+          UNSIGNED_APK=$(find . -path "*/outputs/apk/*" -name "*.apk" | head -n 1)
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun APK 'modern' trouvé. Vérifie que assembleModernDebug a bien produit un résultat."
+            echo "Erreur : Aucun APK trouvé. Vérifie que la compilation a réussi."
             find . -name "*.apk"
             exit 1
           fi
