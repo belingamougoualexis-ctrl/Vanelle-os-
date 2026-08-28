@@ -36,7 +36,6 @@ jobs:
             echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#FF6200EE" android:pathData="M37,29L61,29L61,35L37,35Z M37,43L71,43L71,49L37,49Z M37,57L71,57L71,63L37,63Z"/></vector>' > app/src/main/res/drawable/ic_launcher_foreground.xml
           fi
 
-          # Vérification facultative du fichier Kotlin pour éviter d'injecter une erreur de syntaxe
           if [ -f "app/src/main/java/com/vanelle/os/WebSearchHelper.kt" ]; then
             sed -i 's/= return /{ /g' app/src/main/java/com/vanelle/os/WebSearchHelper.kt || true
           fi
@@ -48,7 +47,7 @@ jobs:
           java-version: '17'
 
       - name: Configuration du cache Gradle
-        uses: actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v3
 
       - name: Compilation de l'APK
         run: |
