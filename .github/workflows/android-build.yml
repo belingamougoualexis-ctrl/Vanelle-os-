@@ -7,6 +7,9 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-and-sign:
     runs-on: ubuntu-latest
@@ -38,12 +41,10 @@ jobs:
               with open(file_path, "r", encoding="utf-8") as f:
                   lines = f.readlines()
 
-              # Recherche des réaffectations de variables et conversion de leur déclaration val -> var
               content = "".join(lines)
               val_vars = set(re.findall(r"\bval\s+([a-zA-Z0-9_]+)\b", content))
               
               for var_name in val_vars:
-                  # Si la variable est réaffectée plus loin (ex: var_name = ...)
                   if re.search(r"\b" + var_name + r"\s*=\s*", content[content.find("val " + var_name) + len(var_name):]):
                       content = re.sub(r"\bval\s+" + var_name + r"\b", f"var {var_name}", content)
 
@@ -58,7 +59,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Compilation de l'APK
+      - name: Configuration Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Compilation de l'APK (release)
         run: |
           GRADLE_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
 
@@ -72,9 +76,9 @@ jobs:
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleRelease --stacktrace
           else
-            gradle assembleDebug --stacktrace
+            gradle assembleRelease --stacktrace
           fi
 
       - name: Génération du Keystore de signature
@@ -98,6 +102,8 @@ jobs:
             exit 1
           fi
 
+          echo "APK trouvé : $UNSIGNED_APK"
+
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
 
           ${BUILD_TOOLS_DIR}/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
@@ -109,9 +115,16 @@ jobs:
             --ks-key-alias autokey \
             --out VanelleOS-release-signed.apk app-aligned.apk
 
-      - name: Publication de l'APK final
-        uses: actions/upload-artifact@v4
+          ls -la VanelleOS-release-signed.apk
+
+      - name: Publication sur GitHub Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: VanelleOS-Release-APK
-          path: VanelleOS-release-signed.apk
-          if-no-files-found: error
+          tag_name: v${{ github.run_number }}
+          name: VanelleOS ${{ github.run_number }}
+          body: "APK release signé — téléchargeable sur téléphone"
+          files: VanelleOS-release-signed.apk
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
