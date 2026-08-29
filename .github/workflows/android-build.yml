@@ -28,29 +28,39 @@ jobs:
             done
           fi
 
-      - name: Correctif automatique du code Kotlin (val -> var)
+      - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
         run: |
-          echo "android.useAndroidX=true" >> gradle.properties
-          echo "android.enableJetifier=true" >> gradle.properties
+          # AndroidX
+          for gp in $(find . -name "gradle.properties"); do
+            grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
+            grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
+          done
 
+          # Désactive minify/shrink pour éviter l'échec R8 avec Kotlin 2.3
+          for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
+            echo "Patch minify dans : $f"
+            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
+            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
+            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
+            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
+          done
+
+          # Correctif Fragments.kt (val -> var si réaffectation)
           python3 -c '
           import re, os
-
-          file_path = "app/src/main/java/com/vanelle/os/Fragments.kt"
-          if os.path.exists(file_path):
-              with open(file_path, "r", encoding="utf-8") as f:
-                  lines = f.readlines()
-
-              content = "".join(lines)
-              val_vars = set(re.findall(r"\bval\s+([a-zA-Z0-9_]+)\b", content))
-              
-              for var_name in val_vars:
-                  if re.search(r"\b" + var_name + r"\s*=\s*", content[content.find("val " + var_name) + len(var_name):]):
-                      content = re.sub(r"\bval\s+" + var_name + r"\b", f"var {var_name}", content)
-
-              with open(file_path, "w", encoding="utf-8") as f:
-                  f.write(content)
-              print("Correction dynamique appliquée à Fragments.kt")
+          for root, dirs, files in os.walk("."):
+              if "Fragments.kt" in files:
+                  path = os.path.join(root, "Fragments.kt")
+                  with open(path, "r", encoding="utf-8") as f:
+                      content = f.read()
+                  val_vars = set(re.findall(r"\bval\s+([a-zA-Z0-9_]+)\b", content))
+                  for var_name in val_vars:
+                      idx = content.find("val " + var_name)
+                      if idx >= 0 and re.search(r"\b" + var_name + r"\s*=\s*", content[idx + len(var_name):]):
+                          content = re.sub(r"\bval\s+" + var_name + r"\b", "var " + var_name, content)
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print("Correction appliquée à", path)
           '
 
       - name: Configuration de Java (JDK 17)
@@ -62,23 +72,31 @@ jobs:
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Compilation de l'APK (release)
+      - name: Compilation de l'APK (release, sans R8)
         run: |
-          GRADLE_FILE=$(find . -name "settings.gradle*" -o -name "build.gradle*" | head -n 1)
-
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERREUR : Aucun fichier Gradle trouvé."
-            exit 1
+          # Trouver le vrai projet (souvent vanelle_project/)
+          if [ -f "vanelle_project/settings.gradle.kts" ] || [ -f "vanelle_project/settings.gradle" ]; then
+            PROJECT_DIR="vanelle_project"
+          elif [ -f "settings.gradle.kts" ] || [ -f "settings.gradle" ]; then
+            PROJECT_DIR="."
+          else
+            GRADLE_FILE=$(find . -name "settings.gradle*" | head -n 1)
+            if [ -z "$GRADLE_FILE" ]; then
+              echo "ERREUR : Aucun settings.gradle trouvé."
+              find . -name "*.gradle*" | head -20
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname "$GRADLE_FILE")
           fi
 
-          PROJECT_DIR=$(dirname "$GRADLE_FILE")
+          echo "Projet : $PROJECT_DIR"
           cd "$PROJECT_DIR"
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleRelease --stacktrace
+            ./gradlew assembleRelease --stacktrace --no-daemon
           else
-            gradle assembleRelease --stacktrace
+            gradle assembleRelease --stacktrace --no-daemon
           fi
 
       - name: Génération du Keystore de signature
@@ -95,18 +113,24 @@ jobs:
 
       - name: Alignement et Signature de l'APK
         run: |
-          UNSIGNED_APK=$(find . -path "*/outputs/apk/*" -name "*.apk" | head -n 1)
+          UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" ! -name "*-unsigned.apk" | head -n 1)
+
+          if [ -z "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK=$(find . -path "*/outputs/apk/*" -name "*.apk" | head -n 1)
+          fi
 
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
             echo "Erreur : Aucun APK trouvé."
+            find . -name "*.apk" 2>/dev/null || true
             exit 1
           fi
 
           echo "APK trouvé : $UNSIGNED_APK"
+          ls -la "$UNSIGNED_APK"
 
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
 
-          ${BUILD_TOOLS_DIR}/zipalign -v -p 4 "$UNSIGNED_APK" app-aligned.apk
+          ${BUILD_TOOLS_DIR}/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
 
           ${BUILD_TOOLS_DIR}/apksigner sign \
             --ks autogenerated.jks \
@@ -122,9 +146,20 @@ jobs:
         with:
           tag_name: v${{ github.run_number }}
           name: VanelleOS ${{ github.run_number }}
-          body: "APK release signé — téléchargeable sur téléphone"
+          body: |
+            APK release signé — téléchargeable sur téléphone.
+            Désinstalle l'ancienne version avant d'installer si la signature a changé.
           files: VanelleOS-release-signed.apk
           draft: false
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lien de téléchargement
+        run: |
+          echo "## APK prêt" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Télécharger :**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/\( {{ github.repository }}/releases/download/v \){{ github.run_number }}/VanelleOS-release-signed.apk" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Page Releases :** https://github.com/${{ github.repository }}/releases" >> $GITHUB_STEP_SUMMARY
