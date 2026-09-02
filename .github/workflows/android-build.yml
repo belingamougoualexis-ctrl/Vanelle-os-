@@ -81,7 +81,6 @@ jobs:
           echo "OK plugin :"
           ls node_modules/@react-native/gradle-plugin | head
 
-          # Corriger settings.gradle (template officiel RN 0.87)
           cat > "$ANDROID_DIR/settings.gradle" << 'SETTINGS'
           pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
           plugins { id("com.facebook.react.settings") }
@@ -90,10 +89,14 @@ jobs:
           include ':app'
           includeBuild('../node_modules/@react-native/gradle-plugin')
           SETTINGS
-          # retirer l'indentation du heredoc
           sed -i 's/^          //' "$ANDROID_DIR/settings.gradle"
           echo "--- settings.gradle ---"
           cat "$ANDROID_DIR/settings.gradle"
+
+          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip|' \
+            "$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
+          echo "--- gradle-wrapper.properties ---"
+          cat "$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
 
           if [ -f "$RN_ROOT/scripts/prepare-bundled-models.sh" ]; then
             chmod +x "$RN_ROOT/scripts/"*.sh "$ANDROID_DIR/gradlew" || true
