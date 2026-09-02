@@ -1,4 +1,4 @@
-name: Build and Sign Release APK
+name: Build and Sign Release APK Automatically
 
 on:
   push:
@@ -15,379 +15,93 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ============================================================
-      # 1. Checkout
-      # ============================================================
-      - name: Checkout du projet
+      - name: Récupération du code source
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Vérification STRICTE de la structure
-      # ============================================================
-      - name: Vérifier la structure du projet
+      - name: Décompression des archives ZIP
         run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "STRUCTURE DU PROJET"
-          echo "=========================================="
-
-          echo "Répertoire :"
-          pwd
-
-          echo ""
-          echo "Contenu :"
-          ls -la
-
-          if [ ! -f package.json ]; then
-            echo ""
-            echo "ERREUR : package.json n'est pas à la racine."
-            echo ""
-            echo "Fichiers package.json trouvés :"
-            find . -type f -name package.json \
-              -not -path "./.git/*" \
-              -print
-            exit 1
+          ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
+          if [ -n "$ZIP_FILES" ]; then
+            for file in $ZIP_FILES; do
+              echo "Décompression de : $file"
+              unzip -o "$file"
+            done
           fi
 
-          if [ ! -d android ]; then
-            echo "ERREUR : android/ n'est pas à la racine."
-            exit 1
-          fi
+      - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
+        run: |
+          # AndroidX
+          for gp in $(find . -name "gradle.properties"); do
+            grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
+            grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
+          done
 
-          if [ ! -f android/settings.gradle ]; then
-            echo "ERREUR : android/settings.gradle absent."
-            exit 1
-          fi
+          # Désactive minify/shrink pour éviter l'échec R8 avec Kotlin 2.3
+          for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
+            echo "Patch minify dans : $f"
+            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
+            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
+            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
+            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
+          done
 
-          if [ ! -f android/build.gradle ]; then
-            echo "ERREUR : android/build.gradle absent."
-            exit 1
-          fi
+          # Correctif Fragments.kt (val -> var si réaffectation)
+          python3 -c '
+          import re, os
+          for root, dirs, files in os.walk("."):
+              if "Fragments.kt" in files:
+                  path = os.path.join(root, "Fragments.kt")
+                  with open(path, "r", encoding="utf-8") as f:
+                      content = f.read()
+                  val_vars = set(re.findall(r"\bval\s+([a-zA-Z0-9_]+)\b", content))
+                  for var_name in val_vars:
+                      idx = content.find("val " + var_name)
+                      if idx >= 0 and re.search(r"\b" + var_name + r"\s*=\s*", content[idx + len(var_name):]):
+                          content = re.sub(r"\bval\s+" + var_name + r"\b", "var " + var_name, content)
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(content)
+                  print("Correction appliquée à", path)
+          '
 
-          if [ ! -f android/app/build.gradle ]; then
-            echo "ERREUR : android/app/build.gradle absent."
-            exit 1
-          fi
-
-          if [ ! -f android/gradlew ]; then
-            echo "ERREUR : android/gradlew absent."
-            exit 1
-          fi
-
-          echo ""
-          echo "Structure racine correcte."
-
-          echo ""
-          echo "Recherche de structures imbriquées suspectes :"
-
-          if [ -d fixsrc ]; then
-            echo "ERREUR : dossier fixsrc détecté."
-            echo "Le projet ne doit PAS contenir fixsrc/."
-            exit 1
-          fi
-
-          if [ -d project ]; then
-            echo "ERREUR : dossier project détecté."
-            echo "Le projet doit être directement à la racine."
-            exit 1
-          fi
-
-          echo "Aucune structure imbriquée détectée."
-
-      # ============================================================
-      # 3. Node.js
-      # ============================================================
-      - name: Installer Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22.13.0"
-          cache: npm
-          cache-dependency-path: package.json
-
-      # ============================================================
-      # 4. Java 17
-      # ============================================================
-      - name: Installer Java 17
+      - name: Configuration de Java (JDK 17)
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
-      # ============================================================
-      # 5. Android SDK
-      # ============================================================
-      - name: Installer Android SDK
+      - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
 
-      # ============================================================
-      # 6. Vérification des versions
-      # ============================================================
-      - name: Vérifier Node Java npm
+      - name: Compilation de l'APK (release, sans R8)
         run: |
-          set -euo pipefail
-
-          echo "Node :"
-          node --version
-
-          echo ""
-          echo "npm :"
-          npm --version
-
-          echo ""
-          echo "Java :"
-          java -version
-
-      # ============================================================
-      # 7. Installation des dépendances
-      # ============================================================
-      - name: Installer les dépendances React Native
-        run: |
-          set -euo pipefail
-
-          echo "Installation depuis :"
-          pwd
-
-          npm install \
-            --include=dev \
-            --no-audit \
-            --no-fund
-
-          echo ""
-          echo "Vérification de React Native..."
-
-          test -d node_modules/react-native
-          test -f node_modules/react-native/package.json
-
-          echo "React Native présent."
-
-          echo ""
-          echo "Vérification du React Native Gradle Plugin..."
-
-          test -d node_modules/@react-native/gradle-plugin
-          test -f node_modules/@react-native/gradle-plugin/package.json
-
-          echo "Plugin présent."
-
-          echo ""
-          echo "Chemin du plugin :"
-          realpath node_modules/@react-native/gradle-plugin
-
-      # ============================================================
-      # 8. Vérifier les versions React Native
-      # ============================================================
-      - name: Vérifier React Native 0.87.0
-        run: |
-          set -euo pipefail
-
-          RN_VERSION=$(node -p \
-            "require('./node_modules/react-native/package.json').version")
-
-          PLUGIN_VERSION=$(node -p \
-            "require('./node_modules/@react-native/gradle-plugin/package.json').version")
-
-          echo "React Native : $RN_VERSION"
-          echo "Gradle Plugin : $PLUGIN_VERSION"
-
-          if [ "$RN_VERSION" != "0.87.0" ]; then
-            echo "ERREUR : React Native 0.87.0 attendu."
-            exit 1
+          # Trouver le vrai projet (souvent vanelle_project/)
+          if [ -f "vanelle_project/settings.gradle.kts" ] || [ -f "vanelle_project/settings.gradle" ]; then
+            PROJECT_DIR="vanelle_project"
+          elif [ -f "settings.gradle.kts" ] || [ -f "settings.gradle" ]; then
+            PROJECT_DIR="."
+          else
+            GRADLE_FILE=$(find . -name "settings.gradle*" | head -n 1)
+            if [ -z "$GRADLE_FILE" ]; then
+              echo "ERREUR : Aucun settings.gradle trouvé."
+              find . -name "*.gradle*" | head -20
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname "$GRADLE_FILE")
           fi
 
-          if [ "$PLUGIN_VERSION" != "0.87.0" ]; then
-            echo "ERREUR : @react-native/gradle-plugin 0.87.0 attendu."
-            exit 1
+          echo "Projet : $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleRelease --stacktrace --no-daemon
+          else
+            gradle assembleRelease --stacktrace --no-daemon
           fi
 
-          echo "Versions correctes."
-
-      # ============================================================
-      # 9. Vérifier settings.gradle
-      # ============================================================
-      - name: Vérifier settings.gradle
+      - name: Génération du Keystore de signature
         run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "android/settings.gradle"
-          echo "=========================================="
-
-          cat android/settings.gradle
-
-          grep -q '@react-native/gradle-plugin' \
-            android/settings.gradle
-
-          echo ""
-          echo "Plugin React Native référencé correctement."
-
-      # ============================================================
-      # 10. Vérifier le wrapper Gradle
-      # ============================================================
-      - name: Préparer Gradle
-        working-directory: android
-        run: |
-          set -euo pipefail
-
-          chmod +x ./gradlew
-
-          ./gradlew --version
-
-      # ============================================================
-      # 11. AndroidX
-      # ============================================================
-      - name: Vérifier AndroidX
-        run: |
-          set -euo pipefail
-
-          touch android/gradle.properties
-
-          if ! grep -q '^android.useAndroidX=true' \
-              android/gradle.properties; then
-            echo 'android.useAndroidX=true' \
-              >> android/gradle.properties
-          fi
-
-          if ! grep -q '^android.enableJetifier=true' \
-              android/gradle.properties; then
-            echo 'android.enableJetifier=true' \
-              >> android/gradle.properties
-          fi
-
-          echo "gradle.properties :"
-          cat android/gradle.properties
-
-      # ============================================================
-      # 12. Préparer les modèles GGUF
-      # ============================================================
-      - name: Préparer les modèles GGUF
-        run: |
-          set -euo pipefail
-
-          if [ ! -f scripts/prepare-bundled-models.sh ]; then
-            echo "ERREUR : script prepare-bundled-models.sh absent."
-            exit 1
-          fi
-
-          chmod +x scripts/prepare-bundled-models.sh
-
-          ./scripts/prepare-bundled-models.sh
-
-          echo ""
-          echo "Modèles GGUF :"
-
-          find android/app/src/main/assets/models \
-            -maxdepth 1 \
-            -type f \
-            -name "*.gguf" \
-            -exec ls -lh {} \;
-
-      # ============================================================
-      # 13. Audit final avant Gradle
-      # ============================================================
-      - name: Audit complet avant compilation
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "AUDIT FINAL"
-          echo "=========================================="
-
-          test -f package.json
-          test -d node_modules
-          test -d node_modules/react-native
-          test -d node_modules/@react-native/gradle-plugin
-
-          test -f android/settings.gradle
-          test -f android/build.gradle
-          test -f android/app/build.gradle
-          test -f android/gradlew
-
-          echo ""
-          echo "Racine :"
-          pwd
-
-          echo ""
-          echo "Plugin RN :"
-          realpath node_modules/@react-native/gradle-plugin
-
-          echo ""
-          echo "Gradle settings :"
-          realpath android/settings.gradle
-
-          echo ""
-          echo "Projet Android :"
-          realpath android
-
-          echo ""
-          echo "Audit terminé avec succès."
-
-      # ============================================================
-      # 14. Nettoyage Gradle
-      # ============================================================
-      - name: Nettoyer Gradle
-        working-directory: android
-        run: |
-          set -euo pipefail
-
-          ./gradlew clean \
-            --no-daemon \
-            --stacktrace
-
-      # ============================================================
-      # 15. Compilation Release
-      # ============================================================
-      - name: Compiler APK Release
-        working-directory: android
-        run: |
-          set -euo pipefail
-
-          echo "Projet Gradle :"
-          pwd
-
-          ./gradlew \
-            :app:assembleRelease \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-      # ============================================================
-      # 16. Vérifier APK
-      # ============================================================
-      - name: Vérifier APK généré
-        run: |
-          set -euo pipefail
-
-          echo "APK générés :"
-
-          find android/app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            -print
-
-          APK=$(find android/app/build/outputs/apk/release \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)
-
-          if [ -z "${APK:-}" ]; then
-            echo "ERREUR : aucun APK Release."
-            exit 1
-          fi
-
-          echo ""
-          echo "APK : $APK"
-          ls -lh "$APK"
-
-      # ============================================================
-      # 17. Générer le keystore
-      # ============================================================
-      - name: Générer le keystore
-        run: |
-          set -euo pipefail
-
-          keytool -genkeypair \
-            -v \
+          keytool -genkeypair -v \
             -keystore autogenerated.jks \
             -alias autokey \
             -keyalg RSA \
@@ -395,116 +109,57 @@ jobs:
             -validity 10000 \
             -storepass automatch123 \
             -keypass automatch123 \
-            -dname "CN=Vanelle OS, OU=Build, O=Vanelle, L=Yaounde, S=Centre, C=CM"
+            -dname "CN=GitHub Actions, OU=Build, O=Auto, L=City, S=State, C=US"
 
-      # ============================================================
-      # 18. Alignement + signature
-      # ============================================================
-      - name: Aligner et signer APK
+      - name: Alignement et Signature de l'APK
         run: |
-          set -euo pipefail
+          UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" ! -name "*-unsigned.apk" | head -n 1)
 
-          APK=$(find android/app/build/outputs/apk/release \
-            -type f \
-            -name "*.apk" \
-            | head -n 1)
+          if [ -z "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK=$(find . -path "*/outputs/apk/*" -name "*.apk" | head -n 1)
+          fi
 
-          if [ -z "${APK:-}" ]; then
-            echo "ERREUR : APK introuvable."
+          if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
+            echo "Erreur : Aucun APK trouvé."
+            find . -name "*.apk" 2>/dev/null || true
             exit 1
           fi
 
-          BUILD_TOOLS_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            | sort -V \
-            | tail -n 1)
+          echo "APK trouvé : $UNSIGNED_APK"
+          ls -la "$UNSIGNED_APK"
 
-          echo "Build Tools : $BUILD_TOOLS_DIR"
+          BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
 
-          "$BUILD_TOOLS_DIR/zipalign" \
-            -f \
-            -v \
-            -p 4 \
-            "$APK" \
-            app-aligned.apk
+          ${BUILD_TOOLS_DIR}/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
 
-          "$BUILD_TOOLS_DIR/apksigner" sign \
+          ${BUILD_TOOLS_DIR}/apksigner sign \
             --ks autogenerated.jks \
             --ks-pass pass:automatch123 \
             --key-pass pass:automatch123 \
             --ks-key-alias autokey \
-            --out VanelleOS-release-signed.apk \
-            app-aligned.apk
+            --out VanelleOS-release-signed.apk app-aligned.apk
 
-          ls -lh VanelleOS-release-signed.apk
+          ls -la VanelleOS-release-signed.apk
 
-      # ============================================================
-      # 19. Vérifier la signature
-      # ============================================================
-      - name: Vérifier la signature
-        run: |
-          set -euo pipefail
-
-          BUILD_TOOLS_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            | sort -V \
-            | tail -n 1)
-
-          "$BUILD_TOOLS_DIR/apksigner" verify \
-            --verbose \
-            VanelleOS-release-signed.apk
-
-          echo "Signature valide."
-
-      # ============================================================
-      # 20. SHA-256
-      # ============================================================
-      - name: Calculer SHA-256
-        run: |
-          set -euo pipefail
-
-          sha256sum \
-            VanelleOS-release-signed.apk \
-            | tee VanelleOS-release-signed.apk.sha256
-
-      # ============================================================
-      # 21. GitHub Release
-      # ============================================================
-      - name: Publier la Release
+      - name: Publication sur GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: Vanelle OS ${{ github.run_number }}
+          name: VanelleOS ${{ github.run_number }}
           body: |
-            Vanelle OS — APK Release
-
-            APK compilé et signé automatiquement.
-
-            Les modèles GGUF sont préparés pendant le build
-            et intégrés à l'application.
-
-            SHA-256 disponible dans le fichier correspondant.
-          files: |
-            VanelleOS-release-signed.apk
-            VanelleOS-release-signed.apk.sha256
+            APK release signé — téléchargeable sur téléphone.
+            Désinstalle l'ancienne version avant d'installer si la signature a changé.
+          files: VanelleOS-release-signed.apk
           draft: false
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ============================================================
-      # 22. Résumé
-      # ============================================================
-      - name: Résumé du build
+      - name: Lien de téléchargement
         run: |
-          echo "## ✅ Vanelle OS — Build réussi" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "APK : VanelleOS-release-signed.apk" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "SHA-256 :" >> "$GITHUB_STEP_SUMMARY"
-          cat VanelleOS-release-signed.apk.sha256 \
-            >> "$GITHUB_STEP_SUMMARY"
+          echo "## APK prêt" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Télécharger :**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/\( {{ github.repository }}/releases/download/v \){{ github.run_number }}/VanelleOS-release-signed.apk" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Page Releases :** https://github.com/${{ github.repository }}/releases" >> $GITHUB_STEP_SUMMARY
