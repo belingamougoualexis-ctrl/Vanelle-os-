@@ -27,16 +27,21 @@ jobs:
               unzip -o "$file"
             done
           fi
+          echo "--- Contenu après unzip ---"
+          ls -la
+          find . -maxdepth 3 -name package.json -o -name settings.gradle 2>/dev/null | head -20
+
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
 
       - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
         run: |
-          # AndroidX
           for gp in $(find . -name "gradle.properties"); do
             grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
             grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
           done
-
-          # Désactive minify/shrink pour éviter l'échec R8 avec Kotlin 2.3
           for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
             echo "Patch minify dans : $f"
             sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
@@ -44,24 +49,6 @@ jobs:
             sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
             sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
           done
-
-          # Correctif Fragments.kt (val -> var si réaffectation)
-          python3 -c '
-          import re, os
-          for root, dirs, files in os.walk("."):
-              if "Fragments.kt" in files:
-                  path = os.path.join(root, "Fragments.kt")
-                  with open(path, "r", encoding="utf-8") as f:
-                      content = f.read()
-                  val_vars = set(re.findall(r"\bval\s+([a-zA-Z0-9_]+)\b", content))
-                  for var_name in val_vars:
-                      idx = content.find("val " + var_name)
-                      if idx >= 0 and re.search(r"\b" + var_name + r"\s*=\s*", content[idx + len(var_name):]):
-                          content = re.sub(r"\bval\s+" + var_name + r"\b", "var " + var_name, content)
-                  with open(path, "w", encoding="utf-8") as f:
-                      f.write(content)
-                  print("Correction appliquée à", path)
-          '
 
       - name: Configuration de Java (JDK 17)
         uses: actions/setup-java@v4
@@ -74,29 +61,49 @@ jobs:
 
       - name: Compilation de l'APK (release, sans R8)
         run: |
-          # Trouver le vrai projet (souvent vanelle_project/)
-          if [ -f "vanelle_project/settings.gradle.kts" ] || [ -f "vanelle_project/settings.gradle" ]; then
-            PROJECT_DIR="vanelle_project"
-          elif [ -f "settings.gradle.kts" ] || [ -f "settings.gradle" ]; then
-            PROJECT_DIR="."
-          else
-            GRADLE_FILE=$(find . -name "settings.gradle*" | head -n 1)
-            if [ -z "$GRADLE_FILE" ]; then
-              echo "ERREUR : Aucun settings.gradle trouvé."
-              find . -name "*.gradle*" | head -20
-              exit 1
-            fi
-            PROJECT_DIR=$(dirname "$GRADLE_FILE")
+          set -euo pipefail
+
+          GRADLE_FILE=$(find . -name "settings.gradle" -o -name "settings.gradle.kts" | grep -v node_modules | head -n 1 || true)
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "ERREUR : Aucun settings.gradle trouvé."
+            find . -name "*.gradle*" | head -20
+            exit 1
+          fi
+          ANDROID_DIR=$(dirname "$GRADLE_FILE")
+          RN_ROOT=$(cd "$ANDROID_DIR/.." && pwd)
+
+          echo "ANDROID_DIR=$ANDROID_DIR"
+          echo "RN_ROOT=$RN_ROOT"
+
+          if [ ! -f "$RN_ROOT/package.json" ]; then
+            echo "ERREUR : package.json absent dans $RN_ROOT"
+            ls -la "$RN_ROOT"
+            exit 1
           fi
 
-          echo "Projet : $PROJECT_DIR"
-          cd "$PROJECT_DIR"
+          cd "$RN_ROOT"
+          echo "npm install dans $(pwd)"
+          npm install --include=dev --no-audit --no-fund
 
+          if [ ! -d "$RN_ROOT/node_modules/@react-native/gradle-plugin" ]; then
+            echo "ERREUR : plugin toujours absent après npm install"
+            ls -la "$RN_ROOT/node_modules" | head -30
+            exit 1
+          fi
+          echo "OK plugin : $RN_ROOT/node_modules/@react-native/gradle-plugin"
+
+          if [ -f "$RN_ROOT/scripts/prepare-bundled-models.sh" ]; then
+            chmod +x "$RN_ROOT/scripts/"*.sh "$ANDROID_DIR/gradlew" || true
+            "$RN_ROOT/scripts/prepare-bundled-models.sh"
+          fi
+
+          cd "$ANDROID_DIR"
+          echo "Gradle dans $(pwd)"
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleRelease --stacktrace --no-daemon
+            ./gradlew :app:assembleRelease --stacktrace --no-daemon
           else
-            gradle assembleRelease --stacktrace --no-daemon
+            gradle :app:assembleRelease --stacktrace --no-daemon
           fi
 
       - name: Génération du Keystore de signature
@@ -162,4 +169,4 @@ jobs:
           echo "**Télécharger :**" >> $GITHUB_STEP_SUMMARY
           echo "https://github.com/\( {{ github.repository }}/releases/download/v \){{ github.run_number }}/VanelleOS-release-signed.apk" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Page Releases :** https://github.com/${{ github.repository }}/releases" >> $GITHUB_STEP_SUMMARY
+          echo "**Page Releases :** https://github.com/${{ github.repository }}/releases" >> $GITHUB_STEP_SUMMARY 
