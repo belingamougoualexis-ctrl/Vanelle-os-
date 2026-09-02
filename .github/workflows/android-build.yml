@@ -27,8 +27,6 @@ jobs:
               unzip -o "$file"
             done
           fi
-          ls -la
-          find . -maxdepth 3 \( -name package.json -o -name settings.gradle \) 2>/dev/null | head -20
 
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
@@ -42,7 +40,6 @@ jobs:
             grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
           done
           for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
-            echo "Patch minify dans : $f"
             sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
             sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
             sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
@@ -75,11 +72,8 @@ jobs:
           test -f "$RN_ROOT/package.json"
 
           cd "$RN_ROOT"
-          echo "npm install dans $(pwd)"
           npm install --include=dev --no-audit --no-fund
           test -d node_modules/@react-native/gradle-plugin
-          echo "OK plugin :"
-          ls node_modules/@react-native/gradle-plugin | head
 
           cat > "$ANDROID_DIR/settings.gradle" << 'SETTINGS'
           pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
@@ -90,13 +84,58 @@ jobs:
           includeBuild('../node_modules/@react-native/gradle-plugin')
           SETTINGS
           sed -i 's/^          //' "$ANDROID_DIR/settings.gradle"
-          echo "--- settings.gradle ---"
-          cat "$ANDROID_DIR/settings.gradle"
 
           sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip|' \
             "$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
-          echo "--- gradle-wrapper.properties ---"
-          cat "$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
+
+          cat > "$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt" << 'KOTLIN'
+          package com.vanelle.app
+
+          import android.app.Application
+          import com.facebook.react.PackageList
+          import com.facebook.react.ReactApplication
+          import com.facebook.react.ReactHost
+          import com.facebook.react.ReactNativeHost
+          import com.facebook.react.ReactPackage
+          import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.load
+          import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
+          import com.facebook.react.defaults.DefaultReactNativeHost
+          import com.facebook.react.soloader.OpenSourceMergedSoMapping
+          import com.facebook.soloader.SoLoader
+
+          class MainApplication : Application(), ReactApplication {
+
+              override val reactNativeHost: ReactNativeHost =
+                  object : DefaultReactNativeHost(this@MainApplication) {
+                      override fun getPackages(): List<ReactPackage> =
+                          PackageList(this@MainApplication).packages.apply {
+                              add(VanelleNativePackage())
+                          }
+
+                      override fun getJSMainModuleName(): String = "index"
+
+                      override fun getUseDeveloperSupport(): Boolean = BuildConfig.DEBUG
+
+                      override val isNewArchEnabled: Boolean =
+                          BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
+
+                      override val isHermesEnabled: Boolean =
+                          BuildConfig.IS_HERMES_ENABLED
+                  }
+
+              override val reactHost: ReactHost
+                  get() = getDefaultReactHost(applicationContext, reactNativeHost)
+
+              override fun onCreate() {
+                  super.onCreate()
+                  SoLoader.init(this, OpenSourceMergedSoMapping)
+                  if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
+                      load()
+                  }
+              }
+          }
+          KOTLIN
+          sed -i 's/^          //' "$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt"
 
           if [ -f "$RN_ROOT/scripts/prepare-bundled-models.sh" ]; then
             chmod +x "$RN_ROOT/scripts/"*.sh "$ANDROID_DIR/gradlew" || true
@@ -105,7 +144,6 @@ jobs:
 
           cd "$ANDROID_DIR"
           chmod +x ./gradlew
-          echo "Gradle dans $(pwd)"
           ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
       - name: Génération du Keystore de signature
@@ -131,8 +169,6 @@ jobs:
             find . -name "*.apk" 2>/dev/null || true
             exit 1
           fi
-          echo "APK trouvé : $UNSIGNED_APK"
-          ls -la "$UNSIGNED_APK"
           BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
           ${BUILD_TOOLS_DIR}/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
           ${BUILD_TOOLS_DIR}/apksigner sign \
