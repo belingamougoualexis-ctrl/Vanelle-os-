@@ -27,11 +27,7 @@ jobs:
               echo "Décompression de : $file"
               unzip -o "$file"
             done
-          else
-            echo "Aucun ZIP trouvé (le projet est peut-être déjà extrait)"
           fi
-          echo "Contenu après décompression :"
-          find . -maxdepth 3 -type d | head -40
 
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
@@ -54,21 +50,12 @@ jobs:
 
           GRADLE_FILE=$(find . -name "settings.gradle" -o -name "settings.gradle.kts" | grep -v node_modules | head -n 1 || true)
           if [ -z "$GRADLE_FILE" ]; then
-            echo "ERREUR : Aucun settings.gradle trouvé après décompression."
-            echo "Contenu du workspace :"
-            find . -maxdepth 4 \( -name "package.json" -o -name "settings.gradle*" -o -name "*.zip" \) | head -50
+            echo "ERREUR : Aucun settings.gradle trouvé."
             exit 1
           fi
 
           ANDROID_DIR=$(dirname "$GRADLE_FILE")
           RN_ROOT=$(cd "$ANDROID_DIR/.." && pwd)
-
-          echo "ANDROID_DIR=$ANDROID_DIR"
-          echo "RN_ROOT=$RN_ROOT"
-
-          test -f "$RN_ROOT/package.json"
-          test -f "$ANDROID_DIR/settings.gradle" || test -f "$ANDROID_DIR/settings.gradle.kts"
-          test -f "$ANDROID_DIR/gradlew" || test -f "$ANDROID_DIR/gradlew.bat"
 
           echo "root=$RN_ROOT" >> "$GITHUB_OUTPUT"
           echo "android_dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
@@ -77,14 +64,7 @@ jobs:
         working-directory: ${{ steps.root.outputs.root }}
         run: |
           set -euo pipefail
-          echo "cwd=$(pwd)"
-          node --version
-          npm --version
           npm install --include=dev --no-audit --no-fund
-          
-          test -d node_modules/@react-native/gradle-plugin
-          test -f node_modules/@react-native/gradle-plugin/package.json
-          echo "React Native Gradle plugin OK"
 
       - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
         working-directory: ${{ steps.root.outputs.root }}
@@ -94,14 +74,12 @@ jobs:
             grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
             grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
             echo "REACT_NATIVE_NODE_MODULES_DIR=$(pwd)/node_modules" >> "$gp"
-            echo "→ gradle.properties corrigé : $gp"
           done
           for f in $(find . -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" | grep -v node_modules); do
             sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
             sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
             sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
             sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
-            echo "→ minify désactivé dans : $f"
           done
 
       - name: Préparation des modèles IA embarqués
@@ -110,47 +88,6 @@ jobs:
           set -euo pipefail
           chmod +x scripts/prepare-bundled-models.sh scripts/verify-project.sh android/gradlew || true
           ./scripts/prepare-bundled-models.sh
-          ls -lh android/app/src/main/assets/models/*.gguf
-
-      - name: Configuration de Gradle 9.4.1 et de settings.gradle
-        working-directory: ${{ steps.root.outputs.root }}
-        run: |
-          set -euo pipefail
-          cd android
-
-          # 1. Mise à niveau vers Gradle 9.4.1 requise par AGP
-          sed -i 's/gradle-.*-bin.zip/gradle-9.4.1-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
-
-          # 2. Injection propre du build inclus pour React Native Plugin
-          cat << 'EOF' > settings.gradle
-          pluginManagement {
-              includeBuild("../node_modules/@react-native/gradle-plugin")
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          plugins {
-              id("com.facebook.react.settings")
-          }
-
-          rootProject.name = "Vanelle"
-          include(":app")
-          EOF
-
-          echo "→ Gradle configuré sur 9.4.1 avec settings.gradle valide"
-
-      - name: Vérification avant compilation
-        working-directory: ${{ steps.root.outputs.root }}
-        run: |
-          set -euo pipefail
-          test -d node_modules/@react-native/gradle-plugin
-          test -f android/settings.gradle
-          test -x android/gradlew
-          test -f android/app/src/main/assets/models/smollm2-360m-instruct-q4_k_m.gguf
-          test -f android/app/src/main/assets/models/nomic-embed-text-v1.5.Q4_K_M.gguf
-          echo "Tout est prêt pour Gradle"
 
       - name: Compilation de l'APK Release
         working-directory: ${{ steps.root.outputs.root }}/android
@@ -166,10 +103,8 @@ jobs:
           APK=$(find "${{ steps.root.outputs.root }}/android/app/build/outputs/apk/release" -name "*.apk" | head -n 1)
           if [ -z "$APK" ]; then
             echo "Aucun APK trouvé !"
-            find "${{ steps.root.outputs.root }}/android/app/build/outputs" -type f | head -30
             exit 1
           fi
-          echo "APK trouvé : $APK"
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$APK")" >> "$GITHUB_OUTPUT"
 
@@ -188,9 +123,6 @@ jobs:
           name: Vanelle Release ${{ github.run_number }}
           body: |
             APK Release généré automatiquement.
-
-            **Téléchargement direct :**
-            Voir les Assets ci-dessous.
           files: ${{ steps.apk.outputs.path }}
           draft: false
           prerelease: false
