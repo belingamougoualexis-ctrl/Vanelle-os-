@@ -112,36 +112,34 @@ jobs:
           ./scripts/prepare-bundled-models.sh
           ls -lh android/app/src/main/assets/models/*.gguf
 
-      - name: Correction totale de settings.gradle et Downgrade Gradle
+      - name: Adaptation dynamique de settings.gradle pour React Native
         working-directory: ${{ steps.root.outputs.root }}
         run: |
           set -euo pipefail
           cd android
 
-          # 1. Rétrogradation forcée vers Gradle 8.8
+          # 1. Rétrogradation Gradle vers 8.8
           sed -i 's/gradle-.*-bin.zip/gradle-8.8-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
 
-          # 2. Réécriture propre de settings.gradle sans commentaires parasites
-          NODE_MODULES_PATH="${{ steps.root.outputs.root }}/node_modules"
-
+          # 2. Reconstitution de settings.gradle compatible avec la structure extraite du ZIP
           cat << 'EOF' > settings.gradle
           pluginManagement {
-              includeBuild(new File(settingsDir, "../node_modules/@react-native/gradle-plugin"))
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
+              includeBuild("../node_modules/@react-native/gradle-plugin")
           }
           plugins {
               id("com.facebook.react.settings")
           }
+          
+          extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
+              ex.autolinkLibrariesFromCommand()
+          }
+
           rootProject.name = "Vanelle"
           include(":app")
           includeBuild("../node_modules/@react-native/gradle-plugin")
           EOF
 
-          echo "→ settings.gradle réécrit intégralement et proprement"
+          echo "→ settings.gradle réécrit avec autolink classique"
 
       - name: Vérification avant compilation
         working-directory: ${{ steps.root.outputs.root }}
