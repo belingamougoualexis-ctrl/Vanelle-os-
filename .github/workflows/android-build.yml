@@ -15,164 +15,244 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ------------------------------------------------------------
+      # ============================================================
       # 1. Récupération du dépôt
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Récupération du code source
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # 2. Vérification de la structure
-      # ------------------------------------------------------------
-      - name: Vérification du projet
+      # ============================================================
+      # 2. Extraction du projet
+      # ============================================================
+      - name: Extraction du projet Vanelle
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Racine du dépôt ==="
-          pwd
-          ls -la
+          echo "=== CONTENU DU DÉPÔT ==="
+          ls -lah
 
-          if [ ! -f "package.json" ]; then
-            echo "::error::package.json introuvable à la racine du dépôt."
+          ZIP_FILE="Vanelle-grok-workspace-fixed-v3.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::$ZIP_FILE introuvable."
             exit 1
           fi
 
-          if [ ! -f "android/settings.gradle" ] && [ ! -f "android/settings.gradle.kts" ]; then
-            echo "::error::android/settings.gradle introuvable."
-            echo "::error::Le dépôt GitHub doit contenir directement le dossier android/."
+          rm -rf extracted
+          mkdir -p extracted
+
+          echo "Extraction de $ZIP_FILE..."
+
+          unzip -q "$ZIP_FILE" -d extracted
+
+          echo "=== PROJETS DÉTECTÉS ==="
+
+          find extracted \
+            -type f \
+            \( \
+              -name "package.json" \
+              -o -name "settings.gradle" \
+              -o -name "settings.gradle.kts" \
+              -o -name "gradlew" \
+            \) \
+            -not -path "*/node_modules/*" \
+            -print
+
+      # ============================================================
+      # 3. Localisation du vrai projet React Native
+      # ============================================================
+      - name: Localisation du projet React Native
+        id: project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Recherche d'un projet Android React Native..."
+
+          SETTINGS_FILE=$(
+            find extracted \
+              -type f \
+              \( \
+                -name "settings.gradle" \
+                -o -name "settings.gradle.kts" \
+              \) \
+              -not -path "*/node_modules/*" \
+              -not -path "*/build/*" \
+              -print \
+              | head -n 1
+          )
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::Aucun settings.gradle trouvé dans le ZIP."
+            echo ""
+            echo "=== STRUCTURE EXTRAITE ==="
+            find extracted -maxdepth 6 -type f \
+              -not -path "*/node_modules/*" \
+              | head -300
             exit 1
           fi
 
-          if [ ! -f "android/gradlew" ]; then
-            echo "::error::android/gradlew introuvable."
+          ANDROID_DIR="$(dirname "$SETTINGS_FILE")"
+
+          echo "Android trouvé : $ANDROID_DIR"
+
+          CURRENT_DIR="$ANDROID_DIR"
+
+          while [ "$CURRENT_DIR" != "/" ] && \
+                [ ! -f "$CURRENT_DIR/package.json" ]; do
+            CURRENT_DIR="$(dirname "$CURRENT_DIR")"
+          done
+
+          if [ ! -f "$CURRENT_DIR/package.json" ]; then
+            echo "::error::package.json introuvable au-dessus de $ANDROID_DIR"
             exit 1
           fi
 
-          chmod +x android/gradlew
+          RN_ROOT="$CURRENT_DIR"
 
-          echo "Projet React Native/Android correctement détecté."
+          if [ ! -f "$ANDROID_DIR/gradlew" ]; then
+            echo "::error::gradlew introuvable."
+            exit 1
+          fi
 
-      # ------------------------------------------------------------
-      # 3. Node.js
-      # ------------------------------------------------------------
+          echo "============================================"
+          echo "Projet React Native : $RN_ROOT"
+          echo "Projet Android      : $ANDROID_DIR"
+          echo "============================================"
+
+          echo "rn_root=$RN_ROOT" >> "$GITHUB_OUTPUT"
+          echo "android_dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # 4. Node.js
+      # ============================================================
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22.13.0"
-          cache: npm
-          cache-dependency-path: package-lock.json
 
-      # ------------------------------------------------------------
-      # 4. Java 17
-      # ------------------------------------------------------------
+      # ============================================================
+      # 5. Java 17
+      # ============================================================
       - name: Configuration de Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ------------------------------------------------------------
-      # 5. Android SDK
-      # ------------------------------------------------------------
+      # ============================================================
+      # 6. Android SDK
+      # ============================================================
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
 
-      # ------------------------------------------------------------
-      # 6. Installation des dépendances
-      # ------------------------------------------------------------
+      # ============================================================
+      # 7. Installation des dépendances
+      # ============================================================
       - name: Installation des dépendances Node
+        working-directory: ${{ steps.project.outputs.rn_root }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -f "package-lock.json" ]; then
+          if [ -f package-lock.json ]; then
             npm ci --include=dev --no-audit --no-fund
           else
             echo "::warning::package-lock.json absent."
             npm install --include=dev --no-audit --no-fund
           fi
 
-      # ------------------------------------------------------------
-      # 7. Préparation des modèles IA
-      # ------------------------------------------------------------
-      - name: Préparation des modèles IA embarqués
+      # ============================================================
+      # 8. Préparation des modèles IA
+      # ============================================================
+      - name: Préparation des modèles IA
+        working-directory: ${{ steps.project.outputs.rn_root }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -f "scripts/prepare-bundled-models.sh" ]; then
+          if [ -f scripts/prepare-bundled-models.sh ]; then
             chmod +x scripts/prepare-bundled-models.sh
             ./scripts/prepare-bundled-models.sh
           else
-            echo "Aucun script de préparation des modèles IA."
+            echo "Script de modèles IA absent."
           fi
 
-      # ------------------------------------------------------------
-      # 8. Vérification Gradle
-      # ------------------------------------------------------------
+      # ============================================================
+      # 9. Vérification Gradle
+      # ============================================================
       - name: Vérification Gradle
-        working-directory: android
+        working-directory: ${{ steps.project.outputs.android_dir }}
         shell: bash
         run: |
           set -euo pipefail
 
-          chmod +x ./gradlew
+          chmod +x gradlew
 
           ./gradlew --version
 
-      # ------------------------------------------------------------
-      # 9. Compilation APK Release
-      # ------------------------------------------------------------
+      # ============================================================
+      # 10. Compilation APK Release
+      # ============================================================
       - name: Compilation APK Release
-        working-directory: android
+        working-directory: ${{ steps.project.outputs.android_dir }}
         shell: bash
         run: |
           set -euo pipefail
+
+          chmod +x gradlew
 
           ./gradlew \
             :app:assembleRelease \
             --no-daemon \
             --stacktrace
 
-      # ------------------------------------------------------------
-      # 10. Recherche de l'APK
-      # ------------------------------------------------------------
+      # ============================================================
+      # 11. Recherche de l'APK
+      # ============================================================
       - name: Recherche de l'APK
         id: apk
         shell: bash
         run: |
           set -euo pipefail
 
-          APK_DIR="android/app/build/outputs/apk"
+          APK_DIR="${{ steps.project.outputs.android_dir }}/app/build/outputs/apk"
 
-          APK=$(find "$APK_DIR" \
-            -type f \
-            -name "*.apk" \
-            -not -name "*unsigned*" \
-            -print -quit 2>/dev/null || true)
-
-          if [ -z "$APK" ]; then
-            APK=$(find "$APK_DIR" \
+          APK=$(
+            find "$APK_DIR" \
               -type f \
               -name "*.apk" \
-              -print -quit 2>/dev/null || true)
+              -not -name "*unsigned*" \
+              -print \
+              | head -n 1
+          )
+
+          if [ -z "$APK" ]; then
+            APK=$(
+              find "$APK_DIR" \
+                -type f \
+                -name "*.apk" \
+                -print \
+                | head -n 1
+            )
           fi
 
           if [ -z "$APK" ]; then
             echo "::error::Aucun APK généré."
-            find android/app/build/outputs -type f 2>/dev/null || true
+            find "${{ steps.project.outputs.android_dir }}/app/build" \
+              -type f \
+              | head -200
             exit 1
           fi
 
           echo "APK trouvé : $APK"
 
           echo "path=$APK" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$APK")" >> "$GITHUB_OUTPUT"
 
-      # ------------------------------------------------------------
-      # 11. Génération du keystore temporaire
-      # ------------------------------------------------------------
+      # ============================================================
+      # 12. Génération du keystore temporaire
+      # ============================================================
       - name: Génération du keystore
         shell: bash
         env:
@@ -200,9 +280,9 @@ jobs:
 
           echo "KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------
-      # 12. Signature APK
-      # ------------------------------------------------------------
+      # ============================================================
+      # 13. Signature APK
+      # ============================================================
       - name: Signature de l'APK
         id: sign
         shell: bash
@@ -212,24 +292,25 @@ jobs:
           set -euo pipefail
 
           UNSIGNED_APK="${{ steps.apk.outputs.path }}"
+
           APK_DIR="$(dirname "$UNSIGNED_APK")"
 
           ALIGNED_APK="$RUNNER_TEMP/Vanelle-aligned.apk"
           SIGNED_APK="$APK_DIR/Vanelle-release-signed.apk"
 
-          BUILD_TOOLS_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            | sort -V \
-            | tail -n 1)
+          BUILD_TOOLS_DIR=$(
+            find "$ANDROID_SDK_ROOT/build-tools" \
+              -mindepth 1 \
+              -maxdepth 1 \
+              -type d \
+              | sort -V \
+              | tail -n 1
+          )
 
           if [ -z "$BUILD_TOOLS_DIR" ]; then
             echo "::error::Android Build Tools introuvables."
             exit 1
           fi
-
-          echo "Android Build Tools : $BUILD_TOOLS_DIR"
 
           "$BUILD_TOOLS_DIR/zipalign" \
             -f \
@@ -254,9 +335,9 @@ jobs:
 
           echo "path=$SIGNED_APK" >> "$GITHUB_OUTPUT"
 
-      # ------------------------------------------------------------
-      # 13. Upload de l'APK
-      # ------------------------------------------------------------
+      # ============================================================
+      # 14. Upload de l'APK
+      # ============================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -265,9 +346,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ------------------------------------------------------------
-      # 14. Création de la Release GitHub
-      # ------------------------------------------------------------
+      # ============================================================
+      # 15. Release GitHub
+      # ============================================================
       - name: Création de la Release GitHub
         uses: softprops/action-gh-release@v2
         with:
