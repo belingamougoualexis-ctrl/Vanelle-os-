@@ -112,23 +112,39 @@ jobs:
           ./scripts/prepare-bundled-models.sh
           ls -lh android/app/src/main/assets/models/*.gguf
 
-      - name: Correctif Gradle 8.8 et Patch Plugin React Native
+      - name: Correction Plugin Resolution dans settings.gradle
         working-directory: ${{ steps.root.outputs.root }}
         run: |
           set -euo pipefail
           cd android
 
+          # 1. Ajuster Gradle Wrapper vers 8.8
           sed -i 's/gradle-.*-bin.zip/gradle-8.8-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
-          echo "→ Gradle Wrapper ajusté sur 8.8"
 
+          # 2. Reconstruire un bloc pluginManagement au sommet de settings.gradle
           NODE_MODULES_PATH="${{ steps.root.outputs.root }}/node_modules"
           
-          if ! grep -q "includeBuild.*@react-native/gradle-plugin" settings.gradle; then
-            printf 'pluginManagement {\n    includeBuild("%s/@react-native/gradle-plugin")\n}\n' "$NODE_MODULES_PATH" > settings.gradle.tmp
-            cat settings.gradle >> settings.gradle.tmp
-            mv settings.gradle.tmp settings.gradle
-            echo "→ Path du plugin React Native injecté dans settings.gradle"
-          fi
+          # Nettoyer d'anciens essais si présents
+          sed -i '/pluginManagement {/,/}/d' settings.gradle || true
+
+          # Créer l'en-tête parfait pour charger le plugin React Native
+          cat << 'EOF' > settings.gradle.new
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          EOF
+
+          # Injecter le lien vers node_modules
+          printf 'pluginManagement {\n    includeBuild("%s/@react-native/gradle-plugin")\n}\n' "$NODE_MODULES_PATH" >> settings.gradle.new
+          
+          # Fusionner avec le reste du fichier settings.gradle
+          cat settings.gradle >> settings.gradle.new
+          mv settings.gradle.new settings.gradle
+          echo "→ settings.gradle réécrit avec succès"
 
       - name: Vérification avant compilation
         working-directory: ${{ steps.root.outputs.root }}
