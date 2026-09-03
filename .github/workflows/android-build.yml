@@ -112,34 +112,34 @@ jobs:
           ./scripts/prepare-bundled-models.sh
           ls -lh android/app/src/main/assets/models/*.gguf
 
-      - name: Adaptation dynamique de settings.gradle pour React Native
+      - name: Configuration de Gradle 9.4.1 et de settings.gradle
         working-directory: ${{ steps.root.outputs.root }}
         run: |
           set -euo pipefail
           cd android
 
-          # 1. Rétrogradation Gradle vers 8.8
-          sed -i 's/gradle-.*-bin.zip/gradle-8.8-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
+          # 1. Mise à niveau vers Gradle 9.4.1 requise par AGP
+          sed -i 's/gradle-.*-bin.zip/gradle-9.4.1-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
 
-          # 2. Reconstitution de settings.gradle compatible avec la structure extraite du ZIP
+          # 2. Injection propre du build inclus pour React Native Plugin
           cat << 'EOF' > settings.gradle
           pluginManagement {
               includeBuild("../node_modules/@react-native/gradle-plugin")
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
           }
           plugins {
               id("com.facebook.react.settings")
           }
-          
-          extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
-              ex.autolinkLibrariesFromCommand()
-          }
 
           rootProject.name = "Vanelle"
           include(":app")
-          includeBuild("../node_modules/@react-native/gradle-plugin")
           EOF
 
-          echo "→ settings.gradle réécrit avec autolink classique"
+          echo "→ Gradle configuré sur 9.4.1 avec settings.gradle valide"
 
       - name: Vérification avant compilation
         working-directory: ${{ steps.root.outputs.root }}
