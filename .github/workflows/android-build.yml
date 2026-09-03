@@ -1,4 +1,3 @@
-
 name: Build and Sign Release APK Automatically
 
 on:
@@ -21,13 +20,18 @@ jobs:
 
       - name: Décompression des archives ZIP
         run: |
-          ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
+          set -euo pipefail
+          ZIP_FILES=$(find . -maxdepth 2 -name "*.zip" | head -20)
           if [ -n "$ZIP_FILES" ]; then
             for file in $ZIP_FILES; do
               echo "Décompression de : $file"
               unzip -o "$file"
             done
+          else
+            echo "Aucun ZIP trouvé (le projet est peut-être déjà extrait)"
           fi
+          echo "Contenu après décompression :"
+          find . -maxdepth 3 -type d | head -40
 
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
@@ -36,15 +40,18 @@ jobs:
 
       - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
         run: |
-          for gp in $(find . -name "gradle.properties"); do
+          set -euo pipefail
+          for gp in $(find . -name "gradle.properties" | grep -v node_modules); do
             grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
             grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
+            echo "→ gradle.properties corrigé : $gp"
           done
-          for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
+          for f in $(find . -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" | grep -v node_modules); do
             sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
             sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
             sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
             sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
+            echo "→ minify désactivé dans : $f"
           done
 
       - name: Configuration de Java (JDK 17)
@@ -56,18 +63,107 @@ jobs:
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Compilation de l'APK (release, sans R8)
+      - name: Localisation du projet React Native
+        id: root
         run: |
           set -euo pipefail
 
           GRADLE_FILE=$(find . -name "settings.gradle" -o -name "settings.gradle.kts" | grep -v node_modules | head -n 1 || true)
           if [ -z "$GRADLE_FILE" ]; then
-            echo "ERREUR : Aucun settings.gradle trouvé."
+            echo "ERREUR : Aucun settings.gradle trouvé après décompression."
+            echo "Contenu du workspace :"
+            find . -maxdepth 4 \( -name "package.json" -o -name "settings.gradle*" -o -name "*.zip" \) | head -50
             exit 1
           fi
+
           ANDROID_DIR=$(dirname "$GRADLE_FILE")
           RN_ROOT=$(cd "$ANDROID_DIR/.." && pwd)
 
           echo "ANDROID_DIR=$ANDROID_DIR"
           echo "RN_ROOT=$RN_ROOT"
+
           test -f "$RN_ROOT/package.json"
+          test -f "$ANDROID_DIR/settings.gradle" || test -f "$ANDROID_DIR/settings.gradle.kts"
+          test -f "$ANDROID_DIR/gradlew" || test -f "$ANDROID_DIR/gradlew.bat"
+
+          echo "root=$RN_ROOT" >> "$GITHUB_OUTPUT"
+          echo "android_dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Installation des dépendances Node (obligatoire avant Gradle)
+        working-directory: ${{ steps.root.outputs.root }}
+        run: |
+          set -euo pipefail
+          echo "cwd=$(pwd)"
+          node --version
+          npm --version
+          npm install --include=dev --no-audit --no-fund
+          test -d node_modules/@react-native/gradle-plugin
+          test -f node_modules/@react-native/gradle-plugin/package.json
+          echo "React Native Gradle plugin OK"
+          node -e "console.log('react-native →', require.resolve('react-native/package.json'))"
+
+      - name: Préparation des modèles IA embarqués
+        working-directory: ${{ steps.root.outputs.root }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/prepare-bundled-models.sh scripts/verify-project.sh android/gradlew || true
+          ./scripts/prepare-bundled-models.sh
+          ls -lh android/app/src/main/assets/models/*.gguf
+
+      - name: Vérification avant compilation
+        working-directory: ${{ steps.root.outputs.root }}
+        run: |
+          set -euo pipefail
+          test -d node_modules/@react-native/gradle-plugin
+          test -f android/settings.gradle
+          test -x android/gradlew
+          test -f android/app/src/main/assets/models/smollm2-360m-instruct-q4_k_m.gguf
+          test -f android/app/src/main/assets/models/nomic-embed-text-v1.5.Q4_K_M.gguf
+          echo "Tout est prêt pour Gradle"
+
+      - name: Compilation de l'APK Release
+        working-directory: ${{ steps.root.outputs.root }}/android
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Trouver l'APK généré
+        id: apk
+        run: |
+          set -euo pipefail
+          APK=\( (find " \){{ steps.root.outputs.root }}/android/app/build/outputs/apk/release" -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "Aucun APK trouvé !"
+            find "${{ steps.root.outputs.root }}/android/app/build/outputs" -type f | head -30
+            exit 1
+          fi
+          echo "APK trouvé : $APK"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$APK")" >> "$GITHUB_OUTPUT"
+
+      # Artifact (téléchargement rapide depuis la page Actions)
+      - name: Upload APK (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vanelle-release-apk
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # Release GitHub → lien de téléchargement permanent
+      - name: Créer une Release + attacher l'APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Vanelle Release ${{ github.run_number }}
+          body: |
+            APK Release généré automatiquement.
+
+            **Téléchargement direct :**
+            Voir les Assets ci-dessous.
+          files: ${{ steps.apk.outputs.path }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
