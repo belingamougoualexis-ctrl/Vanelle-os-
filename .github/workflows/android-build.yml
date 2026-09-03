@@ -112,7 +112,7 @@ jobs:
           ./scripts/prepare-bundled-models.sh
           ls -lh android/app/src/main/assets/models/*.gguf
 
-      - name: Nettoyage et Correction Structurée de settings.gradle
+      - name: Correction totale de settings.gradle et Downgrade Gradle
         working-directory: ${{ steps.root.outputs.root }}
         run: |
           set -euo pipefail
@@ -121,17 +121,27 @@ jobs:
           # 1. Rétrogradation forcée vers Gradle 8.8
           sed -i 's/gradle-.*-bin.zip/gradle-8.8-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
 
-          # 2. Nettoyage du fichier settings.gradle
-          sed -i '/Cause habituelle/d' settings.gradle
-          sed -i '/pluginManagement {/,/}/d' settings.gradle || true
-
-          # 3. Injection sécurisée du bloc pluginManagement sans casser le YAML
+          # 2. Réécriture propre de settings.gradle sans commentaires parasites
           NODE_MODULES_PATH="${{ steps.root.outputs.root }}/node_modules"
-          
-          printf 'pluginManagement {\n    includeBuild("%s/@react-native/gradle-plugin")\n    repositories {\n        google()\n        mavenCentral()\n        gradlePluginPortal()\n    }\n}\n' "$NODE_MODULES_PATH" > settings.gradle.tmp
-          cat settings.gradle >> settings.gradle.tmp
-          mv settings.gradle.tmp settings.gradle
-          echo "→ settings.gradle nettoyé et reconstruit avec succès"
+
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              includeBuild(new File(settingsDir, "../node_modules/@react-native/gradle-plugin"))
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          plugins {
+              id("com.facebook.react.settings")
+          }
+          rootProject.name = "Vanelle"
+          include(":app")
+          includeBuild("../node_modules/@react-native/gradle-plugin")
+          EOF
+
+          echo "→ settings.gradle réécrit intégralement et proprement"
 
       - name: Vérification avant compilation
         working-directory: ${{ steps.root.outputs.root }}
