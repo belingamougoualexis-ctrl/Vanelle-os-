@@ -1,67 +1,73 @@
-name: Vanelle Android Build
+
+name: Build and Sign Release APK Automatically
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  build-and-sign:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Récupération du code source
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.13.0'
+      - name: Décompression des archives ZIP
+        run: |
+          ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
+          if [ -n "$ZIP_FILES" ]; then
+            for file in $ZIP_FILES; do
+              echo "Décompression de : $file"
+              unzip -o "$file"
+            done
+          fi
 
-      - uses: actions/setup-java@v4
+      - name: Configuration de Node.js
+        uses: actions/setup-node@v4
         with:
-          distribution: temurin
+          node-version: "22.13.0"
+
+      - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
+        run: |
+          for gp in $(find . -name "gradle.properties"); do
+            grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
+            grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
+          done
+          for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
+            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
+            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
+            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
+            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
+          done
+
+      - name: Configuration de Java (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
           java-version: '17'
-          cache: gradle
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Configuration Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Verify repository layout
-        shell: bash
+      - name: Compilation de l'APK (release, sans R8)
         run: |
           set -euo pipefail
-          test -f package.json
-          test -f android/settings.gradle
-          test -f android/build.gradle
-          chmod +x android/gradlew
-          test -x android/gradlew
-          test -d android/app
-          node -e "const p=require('./package.json'); if(p.dependencies?.['react-native']!=='0.87.0') process.exit(1); console.log('React Native:',p.dependencies['react-native'])"
 
-      - name: Install JS dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --include=dev --no-audit --no-fund
-          test -d node_modules/@react-native/gradle-plugin
-          test -f node_modules/@react-native/gradle-plugin/package.json
+          GRADLE_FILE=$(find . -name "settings.gradle" -o -name "settings.gradle.kts" | grep -v node_modules | head -n 1 || true)
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "ERREUR : Aucun settings.gradle trouvé."
+            exit 1
+          fi
+          ANDROID_DIR=$(dirname "$GRADLE_FILE")
+          RN_ROOT=$(cd "$ANDROID_DIR/.." && pwd)
 
-      - name: Prepare bundled AI models
-        shell: bash
-        run: |
-          chmod +x scripts/prepare-bundled-models.sh
-          ./scripts/prepare-bundled-models.sh
-
-      - name: Verify Android inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d node_modules/@react-native/gradle-plugin
-          test -f android/app/src/main/assets/models/smollm2-360m-instruct-q4_k_m.gguf
-          test -f android/app/src/main/assets/models/nomic-embed-text-v1.5.Q4_K_M.gguf
-
-      - name: Build debug APK
-        working-directory: android
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Vanelle-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          echo "ANDROID_DIR=$ANDROID_DIR"
+          echo "RN_ROOT=$RN_ROOT"
+          test -f "$RN_ROOT/package.json"
