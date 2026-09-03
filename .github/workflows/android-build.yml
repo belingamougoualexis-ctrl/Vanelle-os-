@@ -73,7 +73,7 @@ jobs:
           echo "root=$RN_ROOT" >> "$GITHUB_OUTPUT"
           echo "android_dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Installation des dépendances Node (Exécutée à la vraie racine du projet)
+      - name: Installation des dépendances Node
         working-directory: ${{ steps.root.outputs.root }}
         run: |
           set -euo pipefail
@@ -82,13 +82,9 @@ jobs:
           npm --version
           npm install --include=dev --no-audit --no-fund
           
-          # Injecter la variable d'environnement pour que Gradle localise le plugin si extrait dans un sous-dossier
-          echo "REACT_NATIVE_NODE_MODULES_DIR=$(pwd)/node_modules" >> $GITHUB_ENV
-
           test -d node_modules/@react-native/gradle-plugin
           test -f node_modules/@react-native/gradle-plugin/package.json
           echo "React Native Gradle plugin OK"
-          node -e "console.log('react-native →', require.resolve('react-native/package.json'))"
 
       - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
         working-directory: ${{ steps.root.outputs.root }}
@@ -115,6 +111,24 @@ jobs:
           chmod +x scripts/prepare-bundled-models.sh scripts/verify-project.sh android/gradlew || true
           ./scripts/prepare-bundled-models.sh
           ls -lh android/app/src/main/assets/models/*.gguf
+
+      - name: Correctif Gradle 8.8 et Patch Plugin React Native
+        working-directory: ${{ steps.root.outputs.root }}
+        run: |
+          set -euo pipefail
+          cd android
+
+          sed -i 's/gradle-.*-bin.zip/gradle-8.8-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
+          echo "→ Gradle Wrapper ajusté sur 8.8"
+
+          NODE_MODULES_PATH="${{ steps.root.outputs.root }}/node_modules"
+          
+          if ! grep -q "includeBuild.*@react-native/gradle-plugin" settings.gradle; then
+            printf 'pluginManagement {\n    includeBuild("%s/@react-native/gradle-plugin")\n}\n' "$NODE_MODULES_PATH" > settings.gradle.tmp
+            cat settings.gradle >> settings.gradle.tmp
+            mv settings.gradle.tmp settings.gradle
+            echo "→ Path du plugin React Native injecté dans settings.gradle"
+          fi
 
       - name: Vérification avant compilation
         working-directory: ${{ steps.root.outputs.root }}
