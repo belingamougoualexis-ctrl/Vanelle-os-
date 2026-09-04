@@ -15,249 +15,80 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ============================================================
-      # 1. RÉCUPÉRATION DU CODE
-      # ============================================================
       - name: Récupération du code source
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. DÉCOMPRESSION DES ARCHIVES
-      # ============================================================
       - name: Décompression des archives ZIP
-        shell: bash
         run: |
-          set -e
-
-          ZIP_FILES=$(find . -maxdepth 2 -type f -name "*.zip" \
-            ! -path "./node_modules/*" || true)
-
+          ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
           if [ -n "$ZIP_FILES" ]; then
-            while IFS= read -r file; do
+            for file in $ZIP_FILES; do
               echo "Décompression de : $file"
               unzip -o "$file"
-            done <<< "$ZIP_FILES"
-          else
-            echo "Aucune archive ZIP à décompresser."
+            done
           fi
 
-      # ============================================================
-      # 3. NODE.JS
-      # ============================================================
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22.13.0"
-          cache: npm
 
-      # ============================================================
-      # 4. JAVA
-      # ============================================================
+      - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
+        run: |
+          for gp in $(find . -name "gradle.properties"); do
+            grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
+            grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
+          done
+          for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
+            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
+            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
+            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
+            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
+          done
+
       - name: Configuration de Java (JDK 17)
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
-      # ============================================================
-      # 5. ANDROID SDK
-      # ============================================================
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
 
-      # ============================================================
-      # 6. CORRECTIFS ANDROIDX / R8
-      # ============================================================
-      - name: Correctifs Gradle
-        shell: bash
+      - name: Compilation de l'APK (release, sans R8)
         run: |
-          set -e
-
-          while IFS= read -r gp; do
-            grep -q "^android.useAndroidX=" "$gp" || \
-              echo "android.useAndroidX=true" >> "$gp"
-
-            grep -q "^android.enableJetifier=" "$gp" || \
-              echo "android.enableJetifier=true" >> "$gp"
-
-            grep -q "^android.newDsl=" "$gp" || \
-              echo "android.newDsl=false" >> "$gp"
-
-            grep -q "^android.builtInKotlin=" "$gp" || \
-              echo "android.builtInKotlin=false" >> "$gp"
-          done < <(find . -name "gradle.properties" \
-            ! -path "*/node_modules/*")
-
-          while IFS= read -r f; do
-            sed -i \
-              's/isMinifyEnabled[[:space:]]*=[[:space:]]*true/isMinifyEnabled = false/g' \
-              "$f" || true
-
-            sed -i \
-              's/isShrinkResources[[:space:]]*=[[:space:]]*true/isShrinkResources = false/g' \
-              "$f" || true
-
-            sed -i \
-              's/minifyEnabled[[:space:]]\+true/minifyEnabled false/g' \
-              "$f" || true
-
-            sed -i \
-              's/shrinkResources[[:space:]]\+true/shrinkResources false/g' \
-              "$f" || true
-          done < <(find . \
-            \( -path "*/app/build.gradle" -o \
-               -path "*/app/build.gradle.kts" \) \
-            ! -path "*/node_modules/*")
-
-      # ============================================================
-      # 7. DÉTECTION DU PROJET ANDROID
-      # ============================================================
-      - name: Détection du projet Android
-        shell: bash
-        run: |
-          set -e
-
-          GRADLE_FILE=$(find . \
-            \( -name "settings.gradle" -o \
-               -name "settings.gradle.kts" \) \
-            ! -path "*/node_modules/*" \
-            ! -path "*/.gradle/*" \
-            | head -n 1 || true)
-
+          set -euo pipefail
+          GRADLE_FILE=$(find . -name "settings.gradle" -o -name "settings.gradle.kts" | grep -v node_modules | head -n 1 || true)
           if [ -z "$GRADLE_FILE" ]; then
             echo "ERREUR : Aucun settings.gradle trouvé."
             exit 1
           fi
-
           ANDROID_DIR=$(dirname "$GRADLE_FILE")
           RN_ROOT=$(cd "$ANDROID_DIR/.." && pwd)
-
-          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
-          echo "RN_ROOT=$RN_ROOT" >> "$GITHUB_ENV"
-
-          echo "Projet Android : $ANDROID_DIR"
-          echo "Racine React Native : $RN_ROOT"
-
-          test -f "$RN_ROOT/package.json" || {
-            echo "ERREUR : package.json introuvable."
-            exit 1
-          }
-
-      # ============================================================
-      # 8. INSTALLATION DES DÉPENDANCES NPM
-      # ============================================================
-      - name: Installation des dépendances Node
-        working-directory: ${{ env.RN_ROOT }}
-        shell: bash
-        run: |
-          set -e
+          echo "ANDROID_DIR=$ANDROID_DIR"
+          echo "RN_ROOT=$RN_ROOT"
+          test -f "$RN_ROOT/package.json"
+          cd "$RN_ROOT"
           npm install --include=dev --no-audit --no-fund
-
           test -d node_modules/@react-native/gradle-plugin
-
-      # ============================================================
-      # 9. CONFIGURATION REACT NATIVE
-      # ============================================================
-      - name: Configuration settings.gradle React Native
-        shell: bash
-        run: |
-          set -e
-
-          cat > "$ANDROID_DIR/settings.gradle" <<'SETTINGS'
+          cat > "$ANDROID_DIR/settings.gradle" << 'SETTINGS'
           pluginManagement {
               includeBuild("../node_modules/@react-native/gradle-plugin")
           }
-
           plugins {
               id("com.facebook.react.settings")
           }
-
           extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
               ex.autolinkLibrariesFromCommand()
           }
-
-          rootProject.name = "Vanelle"
-
-          include(":app")
-
-          includeBuild("../node_modules/@react-native/gradle-plugin")
+          rootProject.name = 'Vanelle'
+          include ':app'
+          includeBuild('../node_modules/@react-native/gradle-plugin')
           SETTINGS
-
-          sed -i 's/^          //' "$ANDROID_DIR/settings.gradle"
-
-      # ============================================================
-      # 10. CONFIGURATION GRADLE 9.4.1
-      # ============================================================
-      - name: Configuration Gradle 9.4.1
-        shell: bash
-        run: |
-          set -e
-
-          WRAPPER="$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
-
-          if [ ! -f "$WRAPPER" ]; then
-            echo "ERREUR : gradle-wrapper.properties introuvable."
-            exit 1
-          fi
-
-          sed -i \
-            's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip|' \
-            "$WRAPPER"
-
-          echo "Gradle configuré :"
-          grep distributionUrl "$WRAPPER"
-
-      # ============================================================
-      # 11. VÉRIFICATION DU PONT EMBEDDINGS
-      # ============================================================
-      - name: Vérification du pont llama.cpp Embeddings
-        working-directory: ${{ env.RN_ROOT }}
-        shell: bash
-        run: |
-          set -e
-
-          if [ -f "scripts/verify-embedding-bridge.sh" ]; then
-            chmod +x scripts/verify-embedding-bridge.sh
-            ./scripts/verify-embedding-bridge.sh
-          else
-            echo "Script de vérification absent."
-            echo "Le build continuera."
-          fi
-
-      # ============================================================
-      # 12. PRÉPARATION DES MODÈLES LOCAUX
-      # ============================================================
-      - name: Préparation des modèles locaux
-        working-directory: ${{ env.RN_ROOT }}
-        shell: bash
-        run: |
-          set -e
-
-          if [ -f "scripts/prepare-bundled-models.sh" ]; then
-            chmod +x scripts/prepare-bundled-models.sh
-            ./scripts/prepare-bundled-models.sh
-          else
-            echo "prepare-bundled-models.sh absent."
-          fi
-
-      # ============================================================
-      # 13. CONFIGURATION MAINAPPLICATION
-      # ============================================================
-      - name: Configuration MainApplication
-        shell: bash
-        run: |
-          set -e
-
-          MAIN="$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt"
-
-          if [ ! -f "$MAIN" ]; then
-            echo "MainApplication.kt introuvable."
-            exit 1
-          fi
-
-          cp "$MAIN" "${MAIN}.backup"
-
-          cat > "$MAIN" <<'KOTLIN'
+          sed -i 's/^ //' "$ANDROID_DIR/settings.gradle"
+          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip|' \
+            "$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
+          cat > "$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt" << 'KOTLIN'
           package com.vanelle.app
 
           import android.app.Application
@@ -274,72 +105,44 @@ jobs:
 
           class MainApplication : Application(), ReactApplication {
 
-              override val reactNativeHost: ReactNativeHost =
-                  object : DefaultReactNativeHost(this@MainApplication) {
+            override val reactNativeHost: ReactNativeHost =
+                object : DefaultReactNativeHost(this@MainApplication) {
+                  override fun getPackages(): List<ReactPackage> =
+                      PackageList(this@MainApplication).packages.apply {
+                        add(VanelleNativePackage())
+                      }
 
-                      override fun getPackages(): List<ReactPackage> =
-                          PackageList(this@MainApplication).packages.apply {
-                              add(VanelleNativePackage())
-                          }
+                  override fun getJSMainModuleName(): String = "index"
 
-                      override fun getJSMainModuleName(): String = "index"
+                  override fun getUseDeveloperSupport(): Boolean = BuildConfig.DEBUG
 
-                      override fun getUseDeveloperSupport(): Boolean =
-                          BuildConfig.DEBUG
+                  override val isNewArchEnabled: Boolean = BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
+                  override val isHermesEnabled: Boolean = BuildConfig.IS_HERMES_ENABLED
+                }
 
-                      override val isNewArchEnabled: Boolean =
-                          BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
+            override val reactHost: ReactHost
+              get() = getDefaultReactHost(applicationContext, reactNativeHost)
 
-                      override val isHermesEnabled: Boolean =
-                          BuildConfig.IS_HERMES_ENABLED
-                  }
-
-              override val reactHost: ReactHost
-                  get() = getDefaultReactHost(
-                      applicationContext,
-                      reactNativeHost
-                  )
-
-              override fun onCreate() {
-                  super.onCreate()
-
-                  SoLoader.init(
-                      this,
-                      OpenSourceMergedSoMapping
-                  )
-
-                  if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
-                      load()
-                  }
+            override fun onCreate() {
+              super.onCreate()
+              SoLoader.init(this, OpenSourceMergedSoMapping)
+              if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
+                load()
               }
+            }
           }
           KOTLIN
-
-          sed -i 's/^          //' "$MAIN"
-
-      # ============================================================
-      # 14. COMPILATION RELEASE
-      # ============================================================
-      - name: Compilation de l'APK Release
-        working-directory: ${{ env.ANDROID_DIR }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
+          sed -i 's/^ //' "$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt"
+          if [ -f "$RN_ROOT/scripts/prepare-bundled-models.sh" ]; then
+            chmod +x "$RN_ROOT/scripts/"*.sh "$ANDROID_DIR/gradlew" || true
+            "$RN_ROOT/scripts/prepare-bundled-models.sh"
+          fi
+          cd "$ANDROID_DIR"
           chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
-          ./gradlew :app:assembleRelease \
-            --stacktrace \
-            --no-daemon
-
-      # ============================================================
-      # 15. GÉNÉRATION DU KEYSTORE
-      # ============================================================
       - name: Génération du Keystore de signature
-        shell: bash
         run: |
-          set -e
-
           keytool -genkeypair -v \
             -keystore autogenerated.jks \
             -alias autokey \
@@ -348,142 +151,46 @@ jobs:
             -validity 10000 \
             -storepass automatch123 \
             -keypass automatch123 \
-            -dname "CN=VanelleOS, OU=Release, O=VanelleOS, C=CM"
+            -dname "CN=GitHub Actions, OU=Build, O=Auto, L=City, S=State, C=US"
 
-      # ============================================================
-      # 16. ALIGNEMENT + SIGNATURE
-      # ============================================================
       - name: Alignement et Signature de l'APK
-        shell: bash
         run: |
-          set -euo pipefail
-
-          UNSIGNED_APK=$(find "$ANDROID_DIR" \
-            -path "*/outputs/apk/release/*.apk" \
-            -name "*.apk" \
-            | head -n 1 || true)
-
+          UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" ! -name "*-unsigned.apk" | head -n 1)
           if [ -z "$UNSIGNED_APK" ]; then
-            UNSIGNED_APK=$(find "$ANDROID_DIR" \
-              -path "*/outputs/apk/*" \
-              -name "*.apk" \
-              | head -n 1 || true)
+            UNSIGNED_APK=$(find . -path "*/outputs/apk/*" -name "*.apk" | head -n 1)
           fi
-
           if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "ERREUR : Aucun APK trouvé."
-            find "$ANDROID_DIR" -name "*.apk" -print || true
+            echo "Erreur : Aucun APK trouvé."
+            find . -name "*.apk" 2>/dev/null || true
             exit 1
           fi
-
-          echo "APK trouvé : $UNSIGNED_APK"
-
-          BUILD_TOOLS_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" \
-            -mindepth 1 -maxdepth 1 -type d \
-            | sort -V \
-            | tail -n 1)
-
-          echo "Build Tools : $BUILD_TOOLS_DIR"
-
-          "$BUILD_TOOLS_DIR/zipalign" \
-            -f -v -p 4 \
-            "$UNSIGNED_APK" \
-            app-aligned.apk
-
-          "$BUILD_TOOLS_DIR/apksigner" sign \
+          BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
+          ${BUILD_TOOLS_DIR}/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
+          ${BUILD_TOOLS_DIR}/apksigner sign \
             --ks autogenerated.jks \
             --ks-pass pass:automatch123 \
             --key-pass pass:automatch123 \
             --ks-key-alias autokey \
-            --out VanelleOS-release-signed.apk \
-            app-aligned.apk
+            --out VanelleOS-release-signed.apk app-aligned.apk
+          ls -la VanelleOS-release-signed.apk
 
-          "$BUILD_TOOLS_DIR/apksigner" verify \
-            --verbose \
-            VanelleOS-release-signed.apk
-
-          ls -lh VanelleOS-release-signed.apk
-
-      # ============================================================
-      # 17. PUBLICATION GITHUB RELEASE
-      # ============================================================
       - name: Publication sur GitHub Releases
-        id: release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: VanelleOS ${{ github.run_number }}
           body: |
-            # VanelleOS ${{ github.run_number }}
-
-            APK Release signé et prêt à être installé.
-
-            📱 Téléchargement direct :
-            VanelleOS-release-signed.apk
-
-            ⚠️ Cette version utilise la signature générée
-            automatiquement par GitHub Actions.
+            APK release signé — téléchargeable sur téléphone.
+            Désinstalle l'ancienne version avant d'installer si la signature a changé.
           files: VanelleOS-release-signed.apk
           draft: false
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ============================================================
-      # 18. GÉNÉRATION DU LIEN DIRECT DE TÉLÉCHARGEMENT
-      # ============================================================
-      - name: Génération du lien de téléchargement Release
-        shell: bash
-        run: |
-          set -e
-
-          RELEASE_TAG="v${{ github.run_number }}"
-          REPO="${{ github.repository }}"
-          APK_NAME="VanelleOS-release-signed.apk"
-
-          RELEASE_URL="https://github.com/${REPO}/releases/tag/${RELEASE_TAG}"
-
-          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${APK_NAME}"
-
-          echo ""
-          echo "=============================================="
-          echo "       VANELLEOS — APK RELEASE"
-          echo "=============================================="
-          echo ""
-          echo "Page GitHub Release :"
-          echo "$RELEASE_URL"
-          echo ""
-          echo "Lien direct APK :"
-          echo "$DOWNLOAD_URL"
-          echo ""
-          echo "=============================================="
-
-          {
-            echo ""
-            echo "## 📱 VanelleOS — APK Release"
-            echo ""
-            echo "### ⬇️ Téléchargement direct"
-            echo ""
-            echo "[**Télécharger VanelleOS APK**]($DOWNLOAD_URL)"
-            echo ""
-            echo "### 📦 GitHub Release"
-            echo ""
-            echo "[Voir la Release $RELEASE_TAG]($RELEASE_URL)"
-            echo ""
-            echo "**Version :** \`$RELEASE_TAG\`"
-            echo ""
-            echo "**APK :** \`$APK_NAME\`"
-            echo ""
-            echo "Le fichier a été compilé, aligné, signé et publié automatiquement."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # ============================================================
-      # 19. ARTIFACT DE SECOURS
-      # ============================================================
-      - name: Upload de l'APK comme Artifact
+      - name: Génération du lien de téléchargement (Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: VanelleOS-release-${{ github.run_number }}
+          name: VanelleOS-release-signed-${{ github.run_number }}
           path: VanelleOS-release-signed.apk
-          if-no-files-found: error
           retention-days: 30
