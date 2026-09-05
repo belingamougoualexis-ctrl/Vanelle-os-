@@ -11,189 +11,264 @@ permissions:
   contents: write
 
 jobs:
-  build-and-sign:
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Récupération du code source
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Décompression des archives ZIP
-        run: |
-          ZIP_FILES=$(find . -maxdepth 2 -name "*.zip")
-          if [ -n "$ZIP_FILES" ]; then
-            for file in $ZIP_FILES; do
-              echo "Décompression de : $file"
-              unzip -o "$file"
-            done
-          fi
-
-      - name: Configuration de Node.js
+      # ============================================================
+      # 2. NODE
+      # ============================================================
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22.13.0"
+          cache: npm
 
-      - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
-        run: |
-          for gp in $(find . -name "gradle.properties"); do
-            grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
-            grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
-          done
-          for f in $(find . -path "*/app/build.gradle*" -o -path "*/app/build.gradle.kts"); do
-            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f"
-            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f"
-            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f"
-            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f"
-          done
-
-      - name: Configuration de Java (JDK 17)
+      # ============================================================
+      # 3. JAVA
+      # ============================================================
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
-      - name: Configuration Android SDK
+      # ============================================================
+      # 4. ANDROID SDK
+      # ============================================================
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Compilation de l'APK (release, sans R8)
+      # ============================================================
+      # 5. ANDROID NDK
+      # ============================================================
+      - name: Install Android NDK
         run: |
-          set -euo pipefail
-          GRADLE_FILE=$(find . -name "settings.gradle" -o -name "settings.gradle.kts" | grep -v node_modules | head -n 1 || true)
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERREUR : Aucun settings.gradle trouvé."
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+          sdkmanager "ndk;29.0.14206865"
+
+      # ============================================================
+      # 6. INSTALL DEPENDENCIES
+      # ============================================================
+      - name: Install npm dependencies
+        run: |
+          npm install
+
+      # ============================================================
+      # 7. PREPARE ANDROID
+      # ============================================================
+      - name: Prepare Android project
+        run: |
+          if [ -f android/gradlew ]; then
+            chmod +x android/gradlew
+          fi
+
+          find android -name "*.gradle" -o -name "*.gradle.kts" | sort
+
+      # ============================================================
+      # 8. PREPARE BUNDLED MODELS
+      # ============================================================
+      - name: Prepare bundled models
+        run: |
+          if [ -f scripts/prepare-bundled-models.sh ]; then
+            chmod +x scripts/prepare-bundled-models.sh
+            ./scripts/prepare-bundled-models.sh
+          else
+            echo "No bundled model preparation script found."
+          fi
+
+      # ============================================================
+      # 9. BUILD RELEASE APK
+      # ============================================================
+      - name: Build Release APK
+        working-directory: android
+        run: |
+          ./gradlew :app:assembleRelease \
+            --stacktrace \
+            --no-daemon
+
+      # ============================================================
+      # 10. FIND GENERATED APK
+      # ============================================================
+      - name: Locate Release APK
+        run: |
+          set -e
+
+          APK_COUNT=$(find android/app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" | wc -l)
+
+          echo "APK count: $APK_COUNT"
+
+          if [ "$APK_COUNT" -ne 1 ]; then
+            echo "Expected exactly one release APK."
+            find android/app/build/outputs/apk/release \
+              -type f \
+              -name "*.apk" -print
             exit 1
           fi
-          ANDROID_DIR=$(dirname "$GRADLE_FILE")
-          RN_ROOT=$(cd "$ANDROID_DIR/.." && pwd)
-          echo "ANDROID_DIR=$ANDROID_DIR"
-          echo "RN_ROOT=$RN_ROOT"
-          test -f "$RN_ROOT/package.json"
-          cd "$RN_ROOT"
-          npm install --include=dev --no-audit --no-fund
-          test -d node_modules/@react-native/gradle-plugin
-          cat > "$ANDROID_DIR/settings.gradle" << 'SETTINGS'
-          pluginManagement {
-              includeBuild("../node_modules/@react-native/gradle-plugin")
-          }
-          plugins {
-              id("com.facebook.react.settings")
-          }
-          extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
-              ex.autolinkLibrariesFromCommand()
-          }
-          rootProject.name = 'Vanelle'
-          include ':app'
-          includeBuild('../node_modules/@react-native/gradle-plugin')
-          SETTINGS
-          sed -i 's/^ //' "$ANDROID_DIR/settings.gradle"
-          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-9.4.1-bin.zip|' \
-            "$ANDROID_DIR/gradle/wrapper/gradle-wrapper.properties"
-          cat > "$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt" << 'KOTLIN'
-          package com.vanelle.app
 
-          import android.app.Application
-          import com.facebook.react.PackageList
-          import com.facebook.react.ReactApplication
-          import com.facebook.react.ReactHost
-          import com.facebook.react.ReactNativeHost
-          import com.facebook.react.ReactPackage
-          import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.load
-          import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
-          import com.facebook.react.defaults.DefaultReactNativeHost
-          import com.facebook.react.soloader.OpenSourceMergedSoMapping
-          import com.facebook.soloader.SoLoader
+          APK=$(find android/app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" | head -n 1)
 
-          class MainApplication : Application(), ReactApplication {
+          echo "APK=$APK" >> "$GITHUB_ENV"
 
-            override val reactNativeHost: ReactNativeHost =
-                object : DefaultReactNativeHost(this@MainApplication) {
-                  override fun getPackages(): List<ReactPackage> =
-                      PackageList(this@MainApplication).packages.apply {
-                        add(VanelleNativePackage())
-                      }
-
-                  override fun getJSMainModuleName(): String = "index"
-
-                  override fun getUseDeveloperSupport(): Boolean = BuildConfig.DEBUG
-
-                  override val isNewArchEnabled: Boolean = BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
-                  override val isHermesEnabled: Boolean = BuildConfig.IS_HERMES_ENABLED
-                }
-
-            override val reactHost: ReactHost
-              get() = getDefaultReactHost(applicationContext, reactNativeHost)
-
-            override fun onCreate() {
-              super.onCreate()
-              SoLoader.init(this, OpenSourceMergedSoMapping)
-              if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
-                load()
-              }
-            }
-          }
-          KOTLIN
-          sed -i 's/^ //' "$ANDROID_DIR/app/src/main/java/com/vanelle/app/MainApplication.kt"
-          if [ -f "$RN_ROOT/scripts/prepare-bundled-models.sh" ]; then
-            chmod +x "$RN_ROOT/scripts/"*.sh
-            "$ANDROID_DIR/gradlew" || true
-            "$RN_ROOT/scripts/prepare-bundled-models.sh"
-          fi
-          cd "$ANDROID_DIR"
-          chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --stacktrace --no-daemon
-
-      - name: Génération automatique du Keystore
+      # ============================================================
+      # 11. GENERATE SIGNING KEY
+      # ============================================================
+      - name: Generate signing key
         run: |
-          keytool -genkeypair -v \
+          keytool -genkeypair \
+            -v \
             -keystore autogenerated.jks \
-            -alias autokey \
+            -alias vanelle \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -storepass automatch123 \
-            -keypass automatch123 \
-            -dname "CN=GitHub Actions, OU=Build, O=Auto, L=City, S=State, C=US"
+            -storepass vanelle123 \
+            -keypass vanelle123 \
+            -dname "CN=Vanelle, OU=Mobile, O=Vanelle, L=Douala, ST=Littoral, C=CM"
 
-      - name: Alignement et Signature de l'APK
+      # ============================================================
+      # 12. ZIPALIGN
+      # ============================================================
+      - name: Zipalign APK
         run: |
-          UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" ! -name "*-unsigned.apk" | head -n 1)
-          if [ -z "$UNSIGNED_APK" ]; then
-            UNSIGNED_APK=$(find . -path "*/outputs/apk/*" -name "*.apk" | head -n 1)
-          fi
-          if [ -z "$UNSIGNED_APK" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun APK trouvé."
-            find . -name "*.apk" 2>/dev/null || true
-            exit 1
-          fi
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
 
-          BUILD_TOOLS_DIR=$(ls -d ${ANDROID_SDK_ROOT}/build-tools/* | tail -n 1)
-          ${BUILD_TOOLS_DIR}/zipalign -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
-          ${BUILD_TOOLS_DIR}/apksigner sign \
+          "$ZIPALIGN" \
+            -P 16 \
+            -f \
+            4 \
+            "$APK" \
+            VanelleOS-release-aligned.apk
+
+      # ============================================================
+      # 13. SIGN APK
+      # ============================================================
+      - name: Sign APK
+        run: |
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+
+          "$APKSIGNER" sign \
             --ks autogenerated.jks \
-            --ks-pass pass:automatch123 \
-            --key-pass pass:automatch123 \
-            --ks-key-alias autokey \
-            --out VanelleOS-release-signed.apk app-aligned.apk
+            --ks-pass pass:vanelle123 \
+            --key-pass pass:vanelle123 \
+            --out VanelleOS-release-signed.apk \
+            VanelleOS-release-aligned.apk
 
-          ls -la VanelleOS-release-signed.apk
+      # ============================================================
+      # 14. VERIFY SIGNATURE
+      # ============================================================
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify \
+            --verbose \
+            VanelleOS-release-signed.apk
 
-      - name: Publication sur GitHub Releases
+      # ============================================================
+      # 15. VERIFY 16 KB ALIGNMENT
+      # ============================================================
+      - name: Verify APK alignment
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" \
+            -c \
+            -P 16 \
+            -v \
+            4 \
+            VanelleOS-release-signed.apk
+
+      # ============================================================
+      # 16. TEST COMPLETE APP ON CLEAN ANDROID EMULATOR
+      # ============================================================
+      - name: Test automatique de l'application sur émulateur Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: >-
+            -no-window
+            -no-audio
+            -no-boot-anim
+            -gpu swiftshader_indirect
+          disable-animations: true
+
+          script: |
+            chmod +x scripts/android-smoke-test.sh
+
+            ./scripts/android-smoke-test.sh \
+              "$GITHUB_WORKSPACE/VanelleOS-release-signed.apk" \
+              "$GITHUB_WORKSPACE/android-test-results"
+
+      # ============================================================
+      # 17. UPLOAD TEST RESULTS EVEN IF TEST FAILS
+      # ============================================================
+      - name: Upload Android test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-results
+          path: android-test-results/
+          if-no-files-found: ignore
+
+      # ============================================================
+      # 18. UPLOAD APK
+      # ============================================================
+      - name: Upload signed APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VanelleOS-release-signed
+          path: VanelleOS-release-signed.apk
+          if-no-files-found: error
+
+      # ============================================================
+      # 19. CREATE GITHUB RELEASE
+      # ============================================================
+      - name: Create GitHub Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: VanelleOS ${{ github.run_number }}
-          body: |
-            APK release signé dynamiquement.
-            ATTENTION : Pensez à désinstaller la version précédente de votre téléphone avant d'installer celle-ci.
-          files: VanelleOS-release-signed.apk
-          draft: false
+          name: VanelleOS v${{ github.run_number }}
           prerelease: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
+          files: |
+            VanelleOS-release-signed.apk
 
-      - name: Génération du lien de téléchargement (Artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: VanelleOS-release-signed-${{ github.run_number }}
-          path: VanelleOS-release-signed.apk
-          retention-days: 30
+      # ============================================================
+      # 20. FINAL STATUS
+      # ============================================================
+      - name: Final verification
+        if: always()
+        run: |
+          echo "=================================================="
+          echo "VANELLE BUILD / SIGN / TEST SUMMARY"
+          echo "=================================================="
+
+          if [ -f VanelleOS-release-signed.apk ]; then
+            echo "APK: OK"
+            ls -lh VanelleOS-release-signed.apk
+          else
+            echo "APK: NOT FOUND"
+          fi
+
+          if [ -d android-test-results ]; then
+            echo "Android tests: RESULTS AVAILABLE"
+            find android-test-results -maxdepth 2 -type f -print
+          else
+            echo "Android tests: NO RESULTS DIRECTORY"
+          fi
+
+          echo "=================================================="
