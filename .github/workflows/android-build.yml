@@ -18,31 +18,6 @@ jobs:
       - name: Récupération du code source
         uses: actions/checkout@v4
 
-      - name: Décompression des archives ZIP
-        run: |
-          ZIP_FILES=$(find . -maxdepth 3 -name "*.zip" 2>/dev/null || true)
-          if [ -n "$ZIP_FILES" ]; then
-            for file in $ZIP_FILES; do
-              echo "Décompression de : $file"
-              unzip -o "\( file" -d " \)(dirname "$file")" || true
-            done
-          fi
-          echo "=== Recherche projet Android ==="
-          find . -name "settings.gradle*" -o -name "gradlew" 2>/dev/null | head -30
-
-      - name: Correctifs Gradle (AndroidX + désactiver R8 minify)
-        run: |
-          for gp in $(find . -name "gradle.properties" 2>/dev/null); do
-            grep -q "android.useAndroidX" "$gp" || echo "android.useAndroidX=true" >> "$gp"
-            grep -q "android.enableJetifier" "$gp" || echo "android.enableJetifier=true" >> "$gp"
-          done
-          for f in $(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) 2>/dev/null); do
-            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f" || true
-            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f" || true
-            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f" || true
-            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f" || true
-          done
-
       - name: Configuration de Java (JDK 17)
         uses: actions/setup-java@v4
         with:
@@ -52,30 +27,52 @@ jobs:
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Compilation de l'APK (release)
+      - name: Extraire le projet + compiler l'APK release
         run: |
           set -euo pipefail
 
-          GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null \
-            | grep -v node_modules | head -n 1 || true)
+          echo "=== Contenu du dépôt ==="
+          ls -la
 
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERREUR : Aucun settings.gradle trouvé."
-            ls -la
-            find . -maxdepth 4 -type d | head -40
-            exit 1
+          # 1) Extraire tous les ZIP (dont VanelleRelance_FINAL.zip)
+          find . -maxdepth 2 -type f -name "*.zip" | while read -r z; do
+            echo ">>> Décompression de $z"
+            unzip -o "$z"
+          done
+
+          echo "=== Après décompression ==="
+          ls -la
+          find . -name "settings.gradle*" -o -name "gradlew" | head -20
+
+          # 2) Trouver le projet Android
+          if [ -f "./VanelleRelance/settings.gradle.kts" ]; then
+            ANDROID_DIR="./VanelleRelance"
+          elif [ -f "./settings.gradle.kts" ]; then
+            ANDROID_DIR="."
+          else
+            GRADLE_FILE=$(find . -name "settings.gradle.kts" -o -name "settings.gradle" | grep -v node_modules | head -n 1 || true)
+            if [ -z "$GRADLE_FILE" ]; then
+              echo "ERREUR : Aucun settings.gradle trouvé après extraction."
+              find . -maxdepth 5 -type f | head -50
+              exit 1
+            fi
+            ANDROID_DIR=$(dirname "$GRADLE_FILE")
           fi
 
-          ANDROID_DIR=$(dirname "$GRADLE_FILE")
           echo "ANDROID_DIR=$ANDROID_DIR"
           cd "$ANDROID_DIR"
+          ls -la
 
+          # 3) Gradle properties
+          grep -q "android.useAndroidX" gradle.properties 2>/dev/null || echo "android.useAndroidX=true" >> gradle.properties
+          grep -q "android.enableJetifier" gradle.properties 2>/dev/null || echo "android.enableJetifier=true" >> gradle.properties
+
+          # 4) Build
           if [ ! -f "./gradlew" ]; then
-            echo "ERREUR : gradlew introuvable dans $ANDROID_DIR"
+            echo "ERREUR : gradlew manquant"
             ls -la
             exit 1
           fi
-
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
@@ -109,7 +106,6 @@ jobs:
           echo "APK trouvé : $UNSIGNED_APK"
           SDK="\( {ANDROID_HOME:- \){ANDROID_SDK_ROOT:-}}"
           BUILD_TOOLS_DIR=$(ls -d "$SDK"/build-tools/* | tail -n 1)
-          echo "Build-tools : $BUILD_TOOLS_DIR"
 
           "${BUILD_TOOLS_DIR}/zipalign" -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
           "${BUILD_TOOLS_DIR}/apksigner" sign \
