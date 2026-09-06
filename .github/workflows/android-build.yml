@@ -161,6 +161,7 @@ jobs:
           ls -la VanelleRelance-release-signed.apk
 
       - name: Publication sur GitHub Releases
+        id: publish_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
@@ -174,9 +175,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: VanelleRelance-release-signed-${{ github.run_number }}
-          path: VanelleRelance-release-signed.apk
-          retention-days: 30
+      - name: Lien de téléchargement
+        run: |
+          echo "## 📦 APK disponible" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Page de la release :** ${{ steps.publish_release.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Téléchargement direct de l'APK :**" >> "$GITHUB_STEP_SUMMARY"
+          for asset_url in $(echo '${{ steps.publish_release.outputs.assets }}' | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4); do
+            echo "- $asset_url" >> "$GITHUB_STEP_SUMMARY"
+          done
