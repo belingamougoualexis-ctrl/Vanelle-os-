@@ -35,7 +35,8 @@ jobs:
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # @tanstack/react-start exige Node >= 22.12 (EBADENGINE sous Node 20)
+          node-version: '22'
 
       - name: Extraire le projet web
         run: |
