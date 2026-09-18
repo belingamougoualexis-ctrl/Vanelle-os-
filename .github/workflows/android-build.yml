@@ -26,6 +26,13 @@ jobs:
 
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Le paquet legacy 'tools' n'existe plus dans les dépôts Google SDK
+          # (sdkmanager échoue avec "Failed to find package 'tools'").
+          # platform-tools + build-tools/platforms seront de toute façon
+          # téléchargés automatiquement par le plugin Android Gradle pendant
+          # le build (les licences SDK sont déjà acceptées par cette action).
+          packages: 'platform-tools'
 
       - name: Extraire le projet + compiler l'APK release
         run: |
