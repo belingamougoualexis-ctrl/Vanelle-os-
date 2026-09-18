@@ -26,99 +26,50 @@ jobs:
 
       - name: Configuration Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          # Le paquet legacy 'tools' n'existe plus dans les dépôts Google SDK.
-          # build-tools / platforms sont téléchargés automatiquement par le
-          # plugin Android Gradle pendant le build (licences déjà acceptées).
-          packages: 'platform-tools'
 
-      - name: Configuration de Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Extraire le projet web
+      - name: Extraire le projet + compiler l'APK release
         run: |
           set -euo pipefail
 
           echo "=== Contenu du dépôt ==="
           ls -la
 
-          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1 || true)
-          if [ -z "${ZIP_FILE:-}" ]; then
-            echo "ERREUR : aucun .zip trouvé à la racine du dépôt."
-            exit 1
-          fi
-          echo ">>> Décompression de $ZIP_FILE dans prime-src/"
-          mkdir -p prime-src
-          unzip -o "$ZIP_FILE" -d prime-src
+          # Extraire tous les ZIP (ex: VanelleRelance_FINAL.zip)
+          find . -maxdepth 2 -type f -name "*.zip" | while read -r z; do
+            echo ">>> Décompression de $z"
+            unzip -o "$z"
+          done
 
-          echo "=== Contenu de prime-src ==="
-          ls -la prime-src
-
-          if [ ! -f prime-src/package.json ]; then
-            echo "ERREUR : package.json introuvable dans le zip extrait."
-            find prime-src -maxdepth 2 -type f
-            exit 1
-          fi
-
-      - name: Installer les dépendances et builder le web app
-        working-directory: prime-src
-        run: |
-          set -euo pipefail
-
-          npm install
-
-          # @capacitor/* ne sont pas dans package.json (installation Android
-          # optionnelle, cf. README) — on les ajoute ici pour le build CI.
-          npm install --no-save @capacitor/core @capacitor/cli @capacitor/android
-
-          npm run build
-
-          echo "=== Contenu après build ==="
+          echo "=== Après décompression ==="
           ls -la
+          find . -name "settings.gradle*" -o -name "gradlew" | head -20
 
-          if [ ! -d dist ]; then
-            echo "ERREUR : dist/ introuvable après 'npm run build'."
-            echo "Ce projet utilise le preset Nitro 'vercel' (voir vite.config.ts) :"
-            echo "si la sortie va dans .vercel/output au lieu de dist/, Capacitor"
-            echo "ne trouvera pas les assets statiques attendus (capacitor.config.ts: webDir='dist')."
-            find . -maxdepth 2 -type d
-            exit 1
-          fi
-
-      - name: Générer / synchroniser le projet Android natif
-        working-directory: prime-src
-        run: |
-          set -euo pipefail
-
-          if [ ! -d android ]; then
-            echo ">>> Aucun dossier android/ — création via Capacitor"
-            npx cap add android
+          # Localiser le projet Android
+          if [ -f "./VanelleRelance/settings.gradle.kts" ]; then
+            ANDROID_DIR="./VanelleRelance"
+          elif [ -f "./settings.gradle.kts" ]; then
+            ANDROID_DIR="."
           else
-            echo ">>> Dossier android/ existant — synchronisation"
-            npx cap sync android
+            GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null \
+              | grep -v node_modules | head -n 1 || true)
+            if [ -z "$GRADLE_FILE" ]; then
+              echo "ERREUR : Aucun settings.gradle trouvé après extraction."
+              find . -maxdepth 5 -type f | head -50
+              exit 1
+            fi
+            ANDROID_DIR=$(dirname "$GRADLE_FILE")
           fi
 
-          if [ ! -f android/gradlew ]; then
-            echo "ERREUR : android/gradlew manquant après 'cap add android'."
-            find android -maxdepth 2 -type f 2>/dev/null || true
-            exit 1
-          fi
-
-          ls -la android
-
-      - name: Compiler l'APK release
-        working-directory: prime-src/android
-        run: |
-          set -euo pipefail
+          echo "ANDROID_DIR=$ANDROID_DIR"
+          cd "$ANDROID_DIR"
+          ls -la
 
           # Gradle properties minimales
           touch gradle.properties
           grep -q "android.useAndroidX" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
           grep -q "android.enableJetifier" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
 
-          # Désactiver minify (évite les échecs liés à ProGuard/R8 sans règles ajustées)
+          # Désactiver minify si présent
           for f in $(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) 2>/dev/null); do
             sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f" || true
             sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f" || true
@@ -126,8 +77,17 @@ jobs:
             sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f" || true
           done
 
+          if [ ! -f "./gradlew" ]; then
+            echo "ERREUR : gradlew manquant dans $ANDROID_DIR"
+            ls -la
+            exit 1
+          fi
+
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --stacktrace --no-daemon
+
+          # Remonter le chemin de l'APK pour les étapes suivantes
+          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
 
       - name: Alignement et Signature de l'APK (vrai Keystore)
         env:
@@ -192,24 +152,24 @@ jobs:
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --key-pass "pass:$KEY_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
-            --out Prime-release-signed.apk \
+            --out VanelleRelance-release-signed.apk \
             app-aligned.apk
 
           # Nettoyage : ne jamais laisser le keystore réel sur le runner
           rm -f release.jks
 
-          ls -la Prime-release-signed.apk
+          ls -la VanelleRelance-release-signed.apk
 
       - name: Publication sur GitHub Releases
         id: publish_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: Prime ${{ github.run_number }}
+          name: Vanelle Relance ${{ github.run_number }}
           body: |
-            APK release signé automatiquement (Prime — app cuisine, Android natif).
+            APK release signé automatiquement (Vanelle Relance — Android natif).
             ATTENTION : désinstallez l'ancienne version avant d'installer celle-ci si la signature a changé.
-          files: Prime-release-signed.apk
+          files: VanelleRelance-release-signed.apk
           draft: false
           prerelease: true
         env:
