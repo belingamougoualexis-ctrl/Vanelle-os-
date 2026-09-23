@@ -1,82 +1,35 @@
-name: Build and Sign Release APK Automatically
+name: Build Windows executable
 
 on:
   push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    branches: [ main ]
+  workflow_dispatch: {}
 
 jobs:
-  build-and-sign:
-    runs-on: ubuntu-latest
-
+  build:
+    runs-on: windows-latest
     steps:
-      - name: Récupération du code source
+      - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      - name: Configuration de Java (JDK 17)
-        uses: actions/setup-java@v4
+      - name: Installer Python
+        uses: actions/setup-python@v5
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          python-version: "3.11"
 
-      - name: Configuration de Node.js
-        uses: actions/setup-node@v4
-        with:
-          # @tanstack/react-start exige Node >= 22.12
-          node-version: '22'
-
-      # ubuntu-latest a déjà le SDK Android préinstallé (ANDROID_HOME, licences
-      # acceptées) — pas besoin d'une action setup-android supplémentaire.
-
-      - name: Extraire et builder le projet web
+      - name: Installer les dépendances de base
         run: |
-          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
-          mkdir -p prime-src
-          unzip -o "$ZIP_FILE" -d prime-src
-          cd prime-src
+      - name: Lancer les tests réels du projet
+        run: python run_tests.py
 
-          npm install
-          npm install --no-save @capacitor/core @capacitor/cli @capacitor/android
-          npm run build
+      - name: Construire l'exécutable (PyInstaller)
+        run: python build_executable.py
 
-          test -d dist || { echo "ERREUR : dist/ introuvable après le build web."; exit 1; }
-
-      - name: Générer le projet Android et compiler l'APK
-        working-directory: prime-src
-        run: |
-          set -euo pipefail
-
-          if [ -d android ]; then npx cap sync android; else npx cap add android; fi
-
-          cd android
-          chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --no-daemon
-
-      - name: Signer l'APK
-        id: sign
-        uses: r0adkll/sign-android-release@v1
+      - name: Publier l'exécutable comme artefact du run
+        uses: actions/upload-artifact@v4
         with:
-          releaseDirectory: prime-src/android/app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-
-      - name: Publication sur GitHub Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.run_number }}
-          name: Prime ${{ github.run_number }}
-          body: APK release signé automatiquement (Prime — app cuisine, Android natif).
-          draft: false
-          prerelease: true
-          files: ${{ steps.sign.outputs.signedReleaseFile }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: AlphaPrime-Windows
+          path: dist/AlphaPrime/
