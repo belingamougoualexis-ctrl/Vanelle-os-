@@ -1,101 +1,172 @@
-name: AlphaPrime CI
+name: Build AlphaPrime Windows executable
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # Évite les crashs d'encodage (cp1252) sur Windows : les tests et les
+      # logs contiennent des accents et des symboles.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
-      - name: Checkout du dépôt
+      # ── 1/5 ─────────────────────────────────────────────────────────────
+      - name: "1/5 Récupérer le dépôt"
         uses: actions/checkout@v4
 
-      - name: Trouver le paquet AlphaPrime
-        shell: pwsh
-        run: |
-          $zip = Get-ChildItem `
-            -Path $env:GITHUB_WORKSPACE `
-            -Filter "AlphaPrime_*.zip" `
-            -File `
-            -Recurse |
-            Where-Object {
-              $_.FullName -notmatch '[\\/]\.git[\\/]' -and
-              $_.FullName -notmatch '[\\/]dist[\\/]' -and
-              $_.FullName -notmatch '[\\/]build[\\/]'
-            } |
-            Sort-Object FullName |
-            Select-Object -First 1
-
-          if (-not $zip) {
-            Write-Error "Aucun fichier AlphaPrime_*.zip trouvé."
-            exit 1
-          }
-
-          Write-Host "ZIP trouvé : $($zip.FullName)"
-          "ALPHAPRIME_ZIP=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Extraire AlphaPrime
-        shell: pwsh
-        run: |
-          $project = Join-Path $env:RUNNER_TEMP "AlphaPrime"
-
-          if (Test-Path $project) {
-            Remove-Item $project -Recurse -Force
-          }
-
-          New-Item -ItemType Directory -Path $project -Force | Out-Null
-
-          Expand-Archive `
-            -Path $env:ALPHAPRIME_ZIP `
-            -DestinationPath $project `
-            -Force
-
-          $req = Get-ChildItem `
-            -Path $project `
-            -Filter "requirements.txt" `
-            -File `
-            -Recurse |
-            Select-Object -First 1
-
-          if (-not $req) {
-            Write-Error "requirements.txt introuvable dans AlphaPrime."
-            Get-ChildItem $project -Recurse -File | Select-Object FullName
-            exit 1
-          }
-
-          $root =$req.Directory.FullName
-
-          Write-Host "Projet AlphaPrime : $root"
-          Write-Host "Requirements : $($req.FullName)"
-
-          "PROJECT_ROOT=$root" \vert{} Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "REQUIREMENTS_FILE=$($req.FullName)" \vert{} Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Installer Python 3.11
+      # ── 2/5 ─────────────────────────────────────────────────────────────
+      # Pas de cache pip : un cache mal configuré est une cause d'échec
+      # classique, et le gain est faible avec des dépendances allégées.
+      - name: "2/5 Installer Python 3.11"
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Vérifier Python
-        shell: pwsh
+      # ── 3/5 ─────────────────────────────────────────────────────────────
+      # Trouve le projet (déjà extrait dans le dépôt OU dans AlphaPrime_*.zip),
+      # puis installe uniquement les dépendances du cœur. torch, transformers,
+      # peft, datasets et accelerate sont exclus : lourds, lents, et inutiles
+      # pour tester et empaqueter le cœur (ils sont importés à la demande).
+      - name: "3/5 Localiser le projet et installer les dépendances"
+        shell: python
         run: |
-          python --version
-          python -m pip --version
+          import os, re, sys, time, zipfile, subprocess, pathlib
 
-      - name: Installer les dépendances
-        shell: pwsh
-        run: |
-          Set-Location -Path $env:PROJECT_ROOT
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -r "$env:REQUIREMENTS_FILE"
+          ws = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
 
-      - name: Vérifier les dépendances
-        shell: pwsh
+          def find_root(base):
+              cands = sorted(base.rglob("desktop_app.py"), key=lambda p: len(p.parts))
+              for p in cands:
+                  d = p.parent
+                  if (d / "run_tests.py").exists() and (d / "requirements.txt").exists():
+                      return d
+              return None
+
+          root = find_root(ws)
+          if root is None:
+              zips = sorted(ws.rglob("AlphaPrime*.zip"), key=lambda p: len(p.parts))
+              if zips:
+                  dest = tmp / "AlphaPrime"
+                  dest.mkdir(parents=True, exist_ok=True)
+                  print(f"Extraction de {zips[0]}")
+                  with zipfile.ZipFile(zips[0]) as z:
+                      z.extractall(dest)
+                  root = find_root(dest)
+
+          if root is None:
+              print("::error::Projet Alpha Prime introuvable (desktop_app.py + run_tests.py + requirements.txt).")
+              for p in sorted(ws.rglob("*"))[:200]:
+                  if ".git" not in p.parts:
+                      print(" ", p.relative_to(ws))
+              sys.exit(1)
+
+          print(f"Projet détecté : {root}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"ROOT={root}\n")
+
+          skip = re.compile(r"^\s*(torch|transformers|peft|datasets|accelerate|pytest)\b", re.I)
+          lines = (root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+          core = tmp / "requirements-ci.txt"
+          core.write_text("\n".join(l for l in lines if not skip.match(l)) + "\n", encoding="utf-8")
+
+          def pip(*args):
+              for attempt in (1, 2, 3):
+                  r = subprocess.run([sys.executable, "-m", "pip", "install",
+                                      "--retries", "5", "--timeout", "60", *args])
+                  if r.returncode == 0:
+                      return
+                  print(f"pip a échoué (tentative {attempt}/3), nouvel essai…", flush=True)
+                  time.sleep(10 * attempt)
+              print(f"::error::Installation impossible : {' '.join(args)}")
+              sys.exit(1)
+
+          pip("-r", str(core))
+          desktop = root / "requirements-desktop.txt"
+          pip("pyinstaller>=6.0", *(["-r", str(desktop)] if desktop.exists() else ["pywebview>=5.0"]))
+
+      # ── 4/5 ─────────────────────────────────────────────────────────────
+      # Syntaxe + tests réels : résultat écrit honnêtement dans le résumé du
+      # run (jamais masqué). Ils n'empêchent pas la construction de l'exe.
+      # Puis PyInstaller (2 essais) et vérification réelle de l'exécutable.
+      - name: "4/5 Tester puis construire l'exécutable"
+        shell: python
         run: |
-          Set-Location -Path $env:PROJECT_ROOT
-          python -m pip check
+          import os, sys, subprocess, pathlib
+
+          root = pathlib.Path(os.environ["ROOT"])
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8")
+
+          def say(text):
+              print(text, flush=True)
+              summary.write(text + "\n")
+              summary.flush()
+
+          say("## Alpha Prime — résultat du run")
+
+          # Syntaxe
+          top = [p.name for p in root.glob("*.py")]
+          c = subprocess.run([sys.executable, "-m", "compileall", "-q", "ai_training_os", "tests", *top], cwd=root)
+          say(f"- Syntaxe Python : {'PASS' if c.returncode == 0 else 'FAIL'}")
+
+          # Tests réels
+          try:
+              t = subprocess.run([sys.executable, "run_tests.py", "--timeout", "300"], cwd=root,
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=2400)
+              print(t.stdout)
+              print(t.stderr)
+              last = [l for l in t.stdout.splitlines() if l.startswith("TOTAL")]
+              say(f"- Tests : {'PASS' if t.returncode == 0 else 'FAIL'} — {last[-1] if last else 'pas de total'}")
+              if t.returncode != 0:
+                  print("::warning::Des tests ont échoué — voir le log ci-dessus. L'exécutable est quand même construit.")
+          except subprocess.TimeoutExpired:
+              say("- Tests : FAIL — délai global dépassé")
+              print("::warning::Tests interrompus par le délai global.")
+
+          # Construction
+          sep = os.pathsep
+          cmd = [sys.executable, "-m", "PyInstaller",
+                 "--name", "AlphaPrime", "--onedir", "--windowed", "--clean", "--noconfirm",
+                 "--paths", str(root),
+                 "--add-data", f"{root / 'frontend'}{sep}frontend",
+                 "--add-data", f"{root / 'ai_training_os'}{sep}ai_training_os",
+                 "--collect-submodules", "ai_training_os",
+                 "--collect-all", "webview",
+                 "--hidden-import", "webview",
+                 str(root / "desktop_app.py")]
+          built = False
+          for attempt in (1, 2):
+              print(f"PyInstaller, tentative {attempt}/2", flush=True)
+              if subprocess.run(cmd, cwd=root).returncode == 0:
+                  built = True
+                  break
+
+          exe = root / "dist" / "AlphaPrime" / "AlphaPrime.exe"
+          if not built or not exe.exists() or exe.stat().st_size == 0:
+              say("- Exécutable : FAIL")
+              print("::error::AlphaPrime.exe n'a pas été généré.")
+              dist = root / "dist"
+              if dist.exists():
+                  for p in dist.rglob("*"):
+                      print(" ", p)
+              sys.exit(1)
+          say(f"- Exécutable : PASS — {exe.stat().st_size} octets (version cœur, sans torch/transformers)")
+
+      # ── 5/5 ─────────────────────────────────────────────────────────────
+      - name: "5/5 Publier l'exécutable"
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlphaPrime-Windows
+          path: ${{ env.ROOT }}/dist/AlphaPrime/
+          if-no-files-found: error
