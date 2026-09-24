@@ -17,19 +17,35 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Localiser automatiquement le dossier du projet
+        shell: pwsh
+        run: |
+          $req = Get-ChildItem -Path . -Filter requirements.txt -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $req) {
+            Write-Host "::error::requirements.txt introuvable dans le dépôt. Structure actuelle :"
+            Get-ChildItem -Recurse -Depth 2 | ForEach-Object { Write-Host $_.FullName }
+            exit 1
+          }
+          $root = $req.DirectoryName
+          Write-Host "Projet trouvé dans : $root"
+          echo "PROJECT_ROOT=$root" >> $env:GITHUB_ENV
+
       - name: Installer les dépendances de base
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Lancer les tests réels du projet
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: python run_tests.py
 
       - name: Construire l'exécutable (PyInstaller)
+        working-directory: ${{ env.PROJECT_ROOT }}
         run: python build_executable.py
 
       - name: Publier l'exécutable comme artefact du run
         uses: actions/upload-artifact@v4
         with:
           name: AlphaPrime-Windows
-          path: dist/AlphaPrime/
+          path: ${{ env.PROJECT_ROOT }}/dist/AlphaPrime/
