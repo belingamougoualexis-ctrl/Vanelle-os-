@@ -1,4 +1,4 @@
-name: Build Windows executable
+name: Build AlphaPrime Windows executable
 
 on:
   push:
@@ -8,44 +8,127 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout du dépôt
         uses: actions/checkout@v4
+
+      - name: Vérifier le paquet AlphaPrime
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path . -Filter "AlphaPrime_*.zip" -File |
+                 Select-Object -First 1
+
+          if (-not $zip) {
+            Write-Error "Paquet AlphaPrime introuvable."
+            Get-ChildItem -Recurse -Depth 3
+            exit 1
+          }
+
+          Write-Host "Paquet trouvé : $($zip.FullName)"
+          "ALPHAPRIME_ZIP=$($zip.FullName)" >> $env:GITHUB_ENV
+
+      - name: Extraire AlphaPrime
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:RUNNER_TEMP "AlphaPrime"
+
+          if (Test-Path $project) {
+            Remove-Item $project -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $project | Out-Null
+
+          Expand-Archive `
+            -Path $env:ALPHAPRIME_ZIP `
+            -DestinationPath $project `
+            -Force
+
+          "PROJECT_ROOT=$project" >> $env:GITHUB_ENV
+
+          Write-Host "AlphaPrime extrait dans : $project"
+
+          if (-not (Test-Path (Join-Path $project "requirements.txt"))) {
+            Write-Error "requirements.txt absent après extraction."
+            Get-ChildItem $project -Recurse -Depth 2
+            exit 1
+          }
 
       - name: Installer Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ${{ env.PROJECT_ROOT }}/requirements.txt
 
-      - name: Localiser automatiquement le dossier du projet
+      - name: Installer les dépendances
+        working-directory: ${{ env.PROJECT_ROOT }}
         shell: pwsh
         run: |
-          $req = Get-ChildItem -Path . -Filter requirements.txt -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $req) {
-            Write-Host "::error::requirements.txt introuvable dans le dépôt. Structure actuelle :"
-            Get-ChildItem -Recurse -Depth 2 | ForEach-Object { Write-Host $_.FullName }
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Vérifier la structure AlphaPrime
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: pwsh
+        run: |
+          $required = @(
+            "requirements.txt",
+            "run_tests.py",
+            "build_executable.py",
+            "ai_training_os",
+            "tests"
+          )
+
+          foreach ($item in $required) {
+            if (-not (Test-Path $item)) {
+              Write-Error "Élément requis absent : $item"
+              exit 1
+            }
+
+            Write-Host "OK : $item"
+          }
+
+      - name: Lancer les tests réels
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: pwsh
+        run: |
+          python run_tests.py
+
+      - name: Construire l'exécutable Windows
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: pwsh
+        run: |
+          python build_executable.py
+
+      - name: Vérifier l'exécutable
+        working-directory: ${{ env.PROJECT_ROOT }}
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:PROJECT_ROOT "dist\AlphaPrime\AlphaPrime.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Error "AlphaPrime.exe n'a pas été généré."
+            Write-Host "Contenu de dist :"
+            if (Test-Path "dist") {
+              Get-ChildItem dist -Recurse
+            }
             exit 1
           }
-          $root = $req.DirectoryName
-          Write-Host "Projet trouvé dans : $root"
-          echo "PROJECT_ROOT=$root" >> $env:GITHUB_ENV
 
-      - name: Installer les dépendances de base
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          $size = (Get-Item $exe).Length
 
-      - name: Lancer les tests réels du projet
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: python run_tests.py
+          if ($size -le 0) {
+            Write-Error "AlphaPrime.exe est vide."
+            exit 1
+          }
 
-      - name: Construire l'exécutable (PyInstaller)
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: python build_executable.py
+          Write-Host "Exécutable valide : $exe"
+          Write-Host "Taille : $size octets"
 
-      - name: Publier l'exécutable comme artefact du run
+      - name: Publier AlphaPrime Windows
         uses: actions/upload-artifact@v4
         with:
           name: AlphaPrime-Windows
           path: ${{ env.PROJECT_ROOT }}/dist/AlphaPrime/
+          if-no-files-found: error
