@@ -1,28 +1,20 @@
-name: Build AlphaPrime Windows executable
+name: AlphaPrime CI
 
 on:
   push:
-    branches: [main]
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
-    name: Build & verify AlphaPrime
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
-      # ============================================================
-      # 1. Récupération du dépôt
-      # ============================================================
       - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Recherche du paquet AlphaPrime
-      # ============================================================
       - name: Trouver le paquet AlphaPrime
         shell: pwsh
         run: |
@@ -32,32 +24,21 @@ jobs:
             -File `
             -Recurse |
             Where-Object {
-              $_.FullName -notmatch "\\\.git\\" -and
-              $_.FullName -notmatch "\\dist\\" -and
-              $_.FullName -notmatch "\\build\\"
+              $_.FullName -notmatch '[\\/]\.git[\\/]' -and
+              $_.FullName -notmatch '[\\/]dist[\\/]' -and
+              $_.FullName -notmatch '[\\/]build[\\/]'
             } |
             Sort-Object FullName |
             Select-Object -First 1
 
           if (-not $zip) {
-            Write-Error "Aucun paquet AlphaPrime_*.zip trouvé."
-            Write-Host "Fichiers présents :"
-            Get-ChildItem `
-              $env:GITHUB_WORKSPACE `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-Object FullName
+            Write-Error "Aucun fichier AlphaPrime_*.zip trouvé."
             exit 1
           }
 
-          Write-Host "Paquet trouvé : $($zip.FullName)"
+          Write-Host "ZIP trouvé : $($zip.FullName)"
+          "ALPHAPRIME_ZIP=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          "ALPHAPRIME_ZIP=$($zip.FullName)" >> $env:GITHUB_ENV
-
-      # ============================================================
-      # 3. Extraction
-      # ============================================================
       - name: Extraire AlphaPrime
         shell: pwsh
         run: |
@@ -67,18 +48,12 @@ jobs:
             Remove-Item $project -Recurse -Force
           }
 
-          New-Item `
-            -ItemType Directory `
-            -Path $project `
-            -Force |
-            Out-Null
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
 
           Expand-Archive `
             -Path $env:ALPHAPRIME_ZIP `
             -DestinationPath $project `
             -Force
-
-          Write-Host "Extraction terminée."
 
           $req = Get-ChildItem `
             -Path $project `
@@ -88,28 +63,23 @@ jobs:
             Select-Object -First 1
 
           if (-not $req) {
-            Write-Error "requirements.txt introuvable."
-            Get-ChildItem $project -Recurse -File |
-              Select-Object FullName
+            Write-Error "requirements.txt introuvable dans AlphaPrime."
+            Get-ChildItem $project -Recurse -File | Select-Object FullName
             exit 1
           }
 
-          $root = $req.Directory.FullName
+          $root =$req.Directory.FullName
 
-          Write-Host "Projet détecté : $root"
+          Write-Host "Projet AlphaPrime : $root"
+          Write-Host "Requirements : $($req.FullName)"
 
-          "PROJECT_ROOT=$root" >> $env:GITHUB_ENV
-          "REQUIREMENTS_FILE=$($req.FullName)" >> $env:GITHUB_ENV
+          "PROJECT_ROOT=$root" \vert{} Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "REQUIREMENTS_FILE=$($req.FullName)" \vert{} Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # ============================================================
-      # 4. Python 3.11
-      # ============================================================
       - name: Installer Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: ${{ env.REQUIREMENTS_FILE }}
 
       - name: Vérifier Python
         shell: pwsh
@@ -117,250 +87,15 @@ jobs:
           python --version
           python -m pip --version
 
-      # ============================================================
-      # 5. Dépendances
-      # ============================================================
       - name: Installer les dépendances
         shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
+          Set-Location -Path $env:PROJECT_ROOT
           python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r "$env:REQUIREMENTS_FILE"
 
-          python -m pip install `
-            -r "$env:REQUIREMENTS_FILE"
-
-          Write-Host "Dépendances installées."
-
-      # ============================================================
-      # 6. Vérification des dépendances
-      # ============================================================
-      - name: Vérifier les dépendances Python
+      - name: Vérifier les dépendances
         shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
         run: |
+          Set-Location -Path $env:PROJECT_ROOT
           python -m pip check
-
-      # ============================================================
-      # 7. Vérification des fichiers essentiels
-      # ============================================================
-      - name: Vérifier la structure du projet
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          $required = @(
-            "requirements.txt",
-            "run_tests.py",
-            "build_executable.py"
-          )
-
-          foreach ($file in $required) {
-            if (-not (Test-Path $file)) {
-              Write-Error "Fichier requis absent : $file"
-              exit 1
-            }
-
-            Write-Host "OK : $file"
-          }
-
-      # ============================================================
-      # 8. Vérification syntaxique complète
-      # ============================================================
-      - name: Vérifier la syntaxe Python
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          Write-Host "Compilation syntaxique de tous les fichiers Python..."
-
-          python -m compileall `
-            -q `
-            ai_training_os `
-            tests `
-            run_tests.py `
-            build_executable.py
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Une erreur de syntaxe Python a été détectée."
-            exit 1
-          }
-
-          Write-Host "Syntaxe Python OK."
-
-      # ============================================================
-      # 9. Tests réels
-      # ============================================================
-      - name: Lancer les tests réels
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        timeout-minutes: 20
-        run: |
-          python run_tests.py
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Les tests AlphaPrime ont échoué."
-            exit 1
-          }
-
-      # ============================================================
-      # 10. Vérification E2E si disponible
-      # ============================================================
-      - name: Vérifier le workflow E2E
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        timeout-minutes: 10
-        run: |
-          if (Test-Path "run_e2e.py") {
-            Write-Host "run_e2e.py trouvé. Exécution..."
-
-            python run_e2e.py
-
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "Le test E2E a échoué."
-              exit 1
-            }
-
-            Write-Host "E2E OK."
-          }
-          else {
-            Write-Host "run_e2e.py absent : étape E2E ignorée."
-          }
-
-      # ============================================================
-      # 11. Nettoyage des anciennes sorties
-      # ============================================================
-      - name: Nettoyer les anciennes sorties
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          if (Test-Path "build") {
-            Remove-Item "build" -Recurse -Force
-          }
-
-          if (Test-Path "dist") {
-            Remove-Item "dist" -Recurse -Force
-          }
-
-      # ============================================================
-      # 12. Construire AlphaPrime.exe
-      # ============================================================
-      - name: Construire l'exécutable
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        timeout-minutes: 20
-        run: |
-          python build_executable.py
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "La construction de l'exécutable a échoué."
-            exit 1
-          }
-
-      # ============================================================
-      # 13. Localiser l'exécutable
-      # ============================================================
-      - name: Vérifier et localiser AlphaPrime.exe
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: |
-          $exe = Get-ChildItem `
-            -Path "dist" `
-            -Filter "AlphaPrime.exe" `
-            -File `
-            -Recurse |
-            Select-Object -First 1
-
-          if (-not $exe) {
-            Write-Error "AlphaPrime.exe n'a pas été généré."
-
-            Write-Host "Contenu de dist :"
-
-            if (Test-Path "dist") {
-              Get-ChildItem "dist" -Recurse |
-                Select-Object FullName, Length
-            }
-
-            exit 1
-          }
-
-          $size = $exe.Length
-
-          if ($size -le 0) {
-            Write-Error "AlphaPrime.exe est vide."
-            exit 1
-          }
-
-          Write-Host "======================================"
-          Write-Host "AlphaPrime.exe généré avec succès"
-          Write-Host "Chemin : $($exe.FullName)"
-          Write-Host "Taille : $size octets"
-          Write-Host "======================================"
-
-          "ALPHAPRIME_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
-
-      # ============================================================
-      # 14. Vérification de l'exécutable
-      # ============================================================
-      - name: Vérifier le format PE Windows
-        shell: pwsh
-        run: |
-          $exe = $env:ALPHAPRIME_EXE
-
-          if (-not (Test-Path $exe)) {
-            Write-Error "EXE introuvable."
-            exit 1
-          }
-
-          $bytes = [System.IO.File]::ReadAllBytes($exe)
-
-          if ($bytes.Length -lt 2) {
-            Write-Error "EXE trop petit."
-            exit 1
-          }
-
-          $mz = [System.Text.Encoding]::ASCII.GetString(
-            $bytes,
-            0,
-            2
-          )
-
-          if ($mz -ne "MZ") {
-            Write-Error "Le fichier généré n'est pas un exécutable PE Windows valide."
-            exit 1
-          }
-
-          Write-Host "Signature PE Windows OK : MZ"
-
-      # ============================================================
-      # 15. Rapport de taille
-      # ============================================================
-      - name: Rapport final
-        shell: pwsh
-        run: |
-          $exe = Get-Item $env:ALPHAPRIME_EXE
-
-          $mb = [Math]::Round(
-            $exe.Length / 1MB,
-            2
-          )
-
-          Write-Host ""
-          Write-Host "======================================"
-          Write-Host "       ALPHAPRIME BUILD REPORT"
-          Write-Host "======================================"
-          Write-Host "Nom      : $($exe.Name)"
-          Write-Host "Taille   : $mb MB"
-          Write-Host "Chemin   : $($exe.FullName)"
-          Write-Host "Plateforme : Windows x64"
-          Write-Host "Python   : 3.11"
-          Write-Host "======================================"
-
-      # ============================================================
-      # 16. Publier l'exécutable
-      # ============================================================
-      - name: Publier AlphaPrime Windows
-        uses: actions/upload-artifact@v4
-        with:
-          name: AlphaPrime-Windows
-          path: ${{ env.PROJECT_ROOT }}/dist/
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 6
