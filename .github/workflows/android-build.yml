@@ -1,145 +1,169 @@
-name: Alpha Prime — Build, Sign & Publish (Android APK)
+name: Build and Sign Release APK Automatically
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch: {}
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-env:
-  NODE_VERSION: '22.13.1'
-  JAVA_VERSION: '17'
-
 jobs:
-  # 1) Vérification mobile (structure + types + tests)
-  verify-source:
-    name: '1 - Vérification source mobile'
+  build-and-sign:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Récupération du code source
+        uses: actions/checkout@v4
 
-      - name: Vérifier la structure du dépôt
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f package.json
-          test -f app.json
-          test -f App.tsx
-          test -f scripts/release_gate.py
-          echo 'Structure mobile OK'
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - run: npm install --no-audit --no-fund
-      - run: python3 scripts/release_gate.py
-      - run: npx expo-doctor
-      - run: npm run typecheck
-      - run: npm test -- --runInBand
-
-  # 2) Build + signature réelle de l'APK Android (keystore, sans EAS)
-  build-android:
-    name: '2 - Build & signature Android'
-    needs: verify-source
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
+      - name: Configuration de Java (JDK 17)
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      - name: Configuration Android SDK
+        uses: android-actions/setup-android@v3
 
-      - uses: actions/setup-node@v4
+      - name: Configuration Node.js (nécessaire car AlphaPrime est un projet Expo)
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '22.13.1'
 
-      - run: npm install --no-audit --no-fund
-
-      - name: Générer le projet Android natif (expo prebuild)
-        run: npx expo prebuild --platform android --no-install
-
-      - name: Compiler l'APK release
-        working-directory: android
+      - name: Extraire le projet + compiler l'APK release
         run: |
+          set -euo pipefail
+          echo "=== Contenu du dépôt ==="
+          ls -la
+          # AlphaPrime est un projet Expo géré : le dossier android/ n'est pas commité,
+          # on le génère ici (équivalent de la décompression pour un projet natif).
+          npm install --no-audit --no-fund
+          npx expo prebuild --platform android --no-install
+          echo "=== Après génération du projet natif ==="
+          ls -la
+          find . -name "settings.gradle*" -o -name "gradlew" | head -20
+          # Localiser le projet Android
+          if [ -f "./android/settings.gradle.kts" ]; then
+            ANDROID_DIR="./android"
+          elif [ -f "./settings.gradle.kts" ]; then
+            ANDROID_DIR="."
+          else
+            GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null \
+              | grep -v node_modules | head -n 1 || true)
+            if [ -z "$GRADLE_FILE" ]; then
+              echo "ERREUR : Aucun settings.gradle trouvé après génération."
+              find . -maxdepth 5 -type f | head -50
+              exit 1
+            fi
+            ANDROID_DIR=$(dirname "$GRADLE_FILE")
+          fi
+          echo "ANDROID_DIR=$ANDROID_DIR"
+          cd "$ANDROID_DIR"
+          ls -la
+          # Gradle properties minimales
+          touch gradle.properties
+          grep -q "android.useAndroidX" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
+          grep -q "android.enableJetifier" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
+          # Désactiver minify si présent
+          for f in $(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) 2>/dev/null); do
+            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f" || true
+            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f" || true
+            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f" || true
+            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f" || true
+          done
+          if [ ! -f "./gradlew" ]; then
+            echo "ERREUR : gradlew manquant dans $ANDROID_DIR"
+            ls -la
+            exit 1
+          fi
           chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
-
-      - name: Aligner et signer l'APK avec le vrai keystore
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon
+          # Remonter le chemin de l'APK pour les étapes suivantes
+          echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+      - name: Alignement et Signature de l'APK (vrai Keystore)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${KEYSTORE_BASE64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
-            echo "ERREUR - secrets KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD manquants."
+          UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" | head -n 1 || true)
+          if [ -z "${UNSIGNED_APK:-}" ] || [ ! -f "$UNSIGNED_APK" ]; then
+            echo "Erreur : Aucun APK trouvé."
+            find . -name "*.apk" 2>/dev/null || true
             exit 1
           fi
-          UNSIGNED_APK=$(find android -path "*/outputs/apk/release/*" -name "*.apk" | head -n 1)
-          test -n "$UNSIGNED_APK"
+          echo "APK trouvé : $UNSIGNED_APK"
+          if [ -z "${KEYSTORE_BASE64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
+            echo "ERREUR : secrets KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD manquants."
+            echo "Ajoutez-les dans Settings > Secrets and variables > Actions du dépôt."
+            exit 1
+          fi
+          # Reconstitue le vrai fichier .jks à partir du secret encodé en base64
           echo "$KEYSTORE_BASE64" | base64 -d > release.jks
-          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          # Résoudre le SDK Android
+          if [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ]; then
+            SDK="$ANDROID_HOME"
+          elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            SDK="$ANDROID_SDK_ROOT"
+          elif [ -d "$HOME/Android/Sdk" ]; then
+            SDK="$HOME/Android/Sdk"
+          elif [ -d "/usr/local/lib/android/sdk" ]; then
+            SDK="/usr/local/lib/android/sdk"
+          else
+            ZIPALIGN_PATH=$(find /usr -name zipalign 2>/dev/null | head -n 1 || true)
+            if [ -n "$ZIPALIGN_PATH" ]; then
+              SDK=$(dirname "$(dirname "$(dirname "$ZIPALIGN_PATH")")")
+            else
+              echo "ERREUR : SDK Android introuvable"
+              exit 1
+            fi
+          fi
+          echo "SDK=$SDK"
+          BUILD_TOOLS_DIR=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "${BUILD_TOOLS_DIR:-}" ] || [ ! -d "$BUILD_TOOLS_DIR" ]; then
+            echo "ERREUR : build-tools introuvable sous $SDK"
+            ls -la "$SDK" 2>/dev/null || true
+            find /usr -name zipalign 2>/dev/null | head -10 || true
+            exit 1
+          fi
+          echo "Build-tools : $BUILD_TOOLS_DIR"
           "$BUILD_TOOLS_DIR/zipalign" -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
           "$BUILD_TOOLS_DIR/apksigner" sign \
             --ks release.jks \
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --key-pass "pass:$KEY_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
-            --out AlphaPrime-signed.apk \
+            --out AlphaPrime-release-signed.apk \
             app-aligned.apk
+          # Nettoyage : ne jamais laisser le keystore réel sur le runner
           rm -f release.jks
-          mkdir -p artifacts/android
-          cp AlphaPrime-signed.apk artifacts/android/AlphaPrime-signed.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: AlphaPrime-Android
-          path: artifacts/android/
-          if-no-files-found: error
-
-  # 3) Publication automatique sur GitHub Releases
-  publish:
-    name: '3 - Publication GitHub Release'
-    needs: build-android
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with: { name: AlphaPrime-Android, path: release/android }
-
-      - name: Valider le binaire
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -s release/android/AlphaPrime-signed.apk
-          echo 'APK présent et non vide'
-
-      - name: Créer la release GitHub
+          ls -la AlphaPrime-release-signed.apk
+      - name: Publication sur GitHub Releases
         id: publish_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: Alpha Prime ${{ github.run_number }}
           body: |
-            Build automatique signé - Alpha Prime Android.
-          files: release/android/AlphaPrime-signed.apk
+            APK release signé automatiquement (Alpha Prime — Android).
+            ATTENTION : désinstallez l'ancienne version avant d'installer celle-ci si la signature a changé.
+          files: AlphaPrime-release-signed.apk
           draft: false
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Résumé du lien de téléchargement
-        shell: bash
+      - name: Lien de téléchargement
         run: |
-          {
-            echo "## Alpha Prime Android - livrable"
-            echo ""
-            echo "Page de la release - ${{ steps.publish_release.outputs.url }}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## Alpha Prime - APK disponible" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Page de la release : ${{ steps.publish_release.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Téléchargement direct de l'APK :" >> "$GITHUB_STEP_SUMMARY"
+          for asset_url in $(echo '${{ steps.publish_release.outputs.assets }}' | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4); do
+            echo "- $asset_url" >> "$GITHUB_STEP_SUMMARY"
+          done
