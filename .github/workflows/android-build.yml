@@ -24,19 +24,30 @@ jobs:
           node-version: '22'
           cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
-      # 3. Installe les dépendances et build le web
+      # 3. Décompresse le zip source (déposé à la racine du dépôt) si le code n'est pas déjà présent
+      - name: Décompresse le zip source si présent
+        run: |
+          if [ ! -f package.json ]; then
+            ZIP=$(find . -maxdepth 1 -name '*.zip' | head -1)
+            if [ -n "$ZIP" ]; then
+              echo "Décompression de $ZIP"
+              unzip -o "$ZIP" -d .
+            fi
+          fi
+
+      # 4. Installe les dépendances et build le web
       - name: Installation et build web
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
           npm run build
 
-      # 4. Ajoute/synchronise le projet Android Capacitor
+      # 5. Ajoute/synchronise le projet Android Capacitor
       - name: Sync Capacitor Android
         run: |
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
 
-      # 5. Build et signe l'APK release avec Gradle
+      # 6. Build et signe l'APK release avec Gradle
       - name: Build et signature de l'APK
         working-directory: android
         env:
@@ -53,7 +64,7 @@ jobs:
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
-      # 6. Publie l'APK comme artefact téléchargeable
+      # 7. Publie l'APK comme artefact téléchargeable
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -76,14 +87,26 @@ jobs:
           node-version: '22'
           cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
-      # 3. Installe les dépendances et build le web (serveur TanStack Start)
+      # 3. Décompresse le zip source (déposé à la racine du dépôt) si le code n'est pas déjà présent
+      - name: Décompresse le zip source si présent
+        shell: bash
+        run: |
+          if [ ! -f package.json ]; then
+            ZIP=$(find . -maxdepth 1 -name '*.zip' | head -1)
+            if [ -n "$ZIP" ]; then
+              echo "Décompression de $ZIP"
+              unzip -o "$ZIP" -d .
+            fi
+          fi
+
+      # 4. Installe les dépendances et build le web (serveur TanStack Start)
       - name: Installation et build web
         shell: bash
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
           npm run build
 
-      # 4. Provisionne automatiquement le wrapper Electron s'il n'existe pas encore
+      # 5. Provisionne automatiquement le wrapper Electron s'il n'existe pas encore
       #    (crée electron/main.js et complète package.json : champ "main" + config "build")
       - name: Provisionne le wrapper Electron
         shell: bash
@@ -187,12 +210,12 @@ jobs:
           node /tmp/patch-package.cjs
           npm install --no-save electron electron-builder
 
-      # 5. Build l'exécutable Windows
+      # 6. Build l'exécutable Windows
       - name: Build exécutable Windows
         shell: bash
         run: npx electron-builder --win --publish never
 
-      # 6. Publie l'exécutable comme artefact téléchargeable
+      # 7. Publie l'exécutable comme artefact téléchargeable
       - name: Upload exécutable Windows
         uses: actions/upload-artifact@v4
         with:
