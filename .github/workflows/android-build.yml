@@ -127,27 +127,30 @@ jobs:
           Write-Host "Exécutable Windows : OK — $((Get-Item $exe).Length) octets"
 
       - name: Décoder le certificat de signature
-        if: ${{ secrets.WINDOWS_CODESIGN_PFX != '' }}
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CODESIGN_PFX }}
+        if: ${{ env.PFX_B64 != '' }}
         shell: pwsh
         run: |
           $bytes = [Convert]::FromBase64String($env:PFX_B64)
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\codesign.pfx", $bytes)
-        env:
-          PFX_B64: ${{ secrets.WINDOWS_CODESIGN_PFX }}
 
       - name: Signer AlphaPrime.exe (Authenticode)
-        if: ${{ secrets.WINDOWS_CODESIGN_PFX != '' }}
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CODESIGN_PFX }}
+          PFX_PASS: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        if: ${{ env.PFX_B64 != '' }}
         shell: pwsh
         run: |
           $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1).FullName
           & $signtool sign /f "$env:RUNNER_TEMP\codesign.pfx" /p "$env:PFX_PASS" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "desktop_engine\dist\AlphaPrime\AlphaPrime.exe"
           & $signtool verify /pa "desktop_engine\dist\AlphaPrime\AlphaPrime.exe"
-        env:
-          PFX_PASS: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
 
       - name: Avertir si non signé
-        if: ${{ secrets.WINDOWS_CODESIGN_PFX == '' }}
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CODESIGN_PFX }}
+        if: ${{ env.PFX_B64 == '' }}
         shell: pwsh
         run: Write-Warning "WINDOWS_CODESIGN_PFX absent — executable NON signe."
 
