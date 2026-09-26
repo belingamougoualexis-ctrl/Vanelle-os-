@@ -149,7 +149,7 @@ jobs:
       - name: Avertir si non signé
         if: ${{ secrets.WINDOWS_CODESIGN_PFX == '' }}
         shell: pwsh
-        run: Write-Warning 'WINDOWS_CODESIGN_PFX absent : exécutable NON signé.'
+        run: Write-Warning "WINDOWS_CODESIGN_PFX absent — executable NON signe."
 
       - uses: actions/upload-artifact@v4
         with:
