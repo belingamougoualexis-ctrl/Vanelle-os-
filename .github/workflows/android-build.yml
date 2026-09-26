@@ -1,766 +1,201 @@
-name: Alpha Prime — REALITY GATE — No Simulation
+name: Build and Sign Release APK
 
 on:
   push:
-    branches: [main]
-
-  pull_request:
-
+    branches: [main, master]
   workflow_dispatch:
-    inputs:
-      verify_physical_devices:
-        description: "Valider réellement sur appareils Android + iOS physiques"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: "22.13.1"
-  PYTHON_VERSION: "3.11"
-  ANDROID_PACKAGE: "com.alphaprime.local"
-  IOS_BUNDLE_ID: "com.alphaprime.local"
-  ALPHA_VERSION: "2.1.0"
-
 jobs:
-
-  # ============================================================
-  # 1. SOURCE REALITY
-  # ============================================================
-
-  mobile-source-reality:
-    name: Mobile — Source Reality Gate
+  build-android:
+    name: Build & sign Android APK
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout source
+      # 1. Récupère le code du dépôt
+      - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # 2. Installe Node.js (LTS courant)
+      - name: Configuration de Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          node-version: '22'
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
-      - name: Verify package files
-        shell: bash
+      # 3. Installe les dépendances et build le web
+      - name: Installation et build web
         run: |
-          set -euo pipefail
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run build
 
-          test -f package.json
-          test -f app.json
-          test -f tsconfig.json
-
-          node -e "
-            const p=require('./package.json');
-            if(p.name !== 'alphaprime-mobile')
-              throw new Error('Mauvais package.json');
-          "
-
-      - name: Install exact dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Expo diagnostics
-        run: npx expo-doctor
-
-      - name: TypeScript reality check
-        run: npm run typecheck
-
-      - name: Unit and integration tests
-        run: npm test -- --runInBand
-
-      # Ce test vérifie que le code de production ne prétend pas
-      # qu'une simulation est une fonctionnalité réelle.
-      - name: Production reality-language gate
-        shell: bash
+      # 4. Ajoute/synchronise le projet Android Capacitor
+      - name: Sync Capacitor Android
         run: |
-          set -euo pipefail
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
 
-          ! grep -RniE \
-            '\b(simulation|simulator|emulator|mock|fake|fictif|fictive|demo)\b' \
-            src \
-            --include='*.ts' \
-            --include='*.tsx' \
-            --exclude-dir='__tests__'
-
-      - name: Verify real package identity
-        shell: bash
+      # 5. Build et signe l'APK release avec Gradle
+      - name: Build et signature de l'APK
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          set -euo pipefail
+          echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
+          chmod +x ./gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=release.keystore \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
-          node <<'NODE'
-          const fs = require("fs");
-          const app = JSON.parse(fs.readFileSync("app.json", "utf8"));
-          const expo = app.expo;
-
-          if (expo.android.package !== "com.alphaprime.local") {
-            throw new Error("Android package incorrect");
-          }
-
-          if (expo.ios.bundleIdentifier !== "com.alphaprime.local") {
-            throw new Error("iOS bundle identifier incorrect");
-          }
-
-          if (expo.version !== "2.1.0") {
-            throw new Error("Version inattendue");
-          }
-
-          if (expo.extra?.aiRuntime !== "llama.cpp") {
-            throw new Error("Le runtime IA mobile n'est pas llama.cpp");
-          }
-
-          if (expo.extra?.mobileModelFormat !== "GGUF") {
-            throw new Error("Le format modèle mobile n'est pas GGUF");
-          }
-          NODE
-
-
-  # ============================================================
-  # 2. DESKTOP — REAL LOCAL ENGINE
-  # ============================================================
-
-  desktop-reality:
-    name: Desktop — Real Local Engine Gate
-    runs-on: windows-2025
-
-    defaults:
-      run:
-        working-directory: desktop_engine
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: desktop_engine/requirements.txt
-
-      - name: Install engine dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      # --------------------------------------------------------
-      # Syntax
-      # --------------------------------------------------------
-
-      - name: Compile complete Python engine
-        run: |
-          python -m compileall -q ai_training_os tests
-
-      - name: Dashboard JavaScript syntax
-        shell: pwsh
-        run: |
-          $js = Join-Path $env:RUNNER_TEMP "dashboard.js"
-          $html = Get-Content frontend/dashboard.html -Raw
-
-          $matches = [regex]::Matches(
-            $html,
-            '<script(?![^>]*src=)[^>]*>([\s\S]*?)</script>'
-          )
-
-          if ($matches.Count -eq 0) {
-            throw "Aucun script local trouvé dans le dashboard."
-          }
-
-          ($matches | ForEach-Object {
-            $_.Groups[1].Value
-          }) -join "`n" | Set-Content -Encoding utf8 $js
-
-          node --check $js
-
-      # --------------------------------------------------------
-      # REALITY TEST ENGINE
-      # --------------------------------------------------------
-
-      - name: Run complete local Reality Engine
-        run: |
-          python run_tests.py --timeout 600
-
-      # --------------------------------------------------------
-      # REAL HARDWARE PROBE
-      # --------------------------------------------------------
-
-      - name: Real hardware capability report
-        shell: pwsh
-        run: |
-          python -c "
-          import json
-          from ai_training_os.hardware_reality import scan, verify
-
-          profile = scan('.')
-          result = verify('.')
-
-          print(json.dumps({
-              'profile': profile,
-              'verification': result
-          }, indent=2, default=str))
-
-          with open('reality-result.json', 'w', encoding='utf-8') as f:
-              json.dump({
-                  'profile': profile,
-                  'verification': result
-              }, f, indent=2, default=str)
-          "
-
-      # --------------------------------------------------------
-      # REAL LOCAL SERVER
-      # --------------------------------------------------------
-
-      - name: Start real local Alpha Prime server
-        shell: pwsh
-        run: |
-          $process = Start-Process `
-            -FilePath "python" `
-            -ArgumentList "run_server.py --host 127.0.0.1 --port 8787" `
-            -WorkingDirectory $PWD `
-            -PassThru
-
-          Set-Content "$env:GITHUB_WORKSPACE\alpha_prime_server.pid" $process.Id
-
-          $ready = $false
-
-          for ($i = 0; $i -lt 30; $i++) {
-            Start-Sleep -Seconds 1
-
-            try {
-              $response = Invoke-WebRequest `
-                -Uri "http://127.0.0.1:8787/api/health" `
-                -UseBasicParsing `
-                -TimeoutSec 3
-
-              if ($response.StatusCode -eq 200) {
-                $ready = $true
-                break
-              }
-            }
-            catch {
-            }
-          }
-
-          if (-not $ready) {
-            throw "Le vrai serveur local Alpha Prime n'a pas démarré."
-          }
-
-      - name: Verify real local API
-        shell: pwsh
-        run: |
-          $health = Invoke-RestMethod `
-            -Uri "http://127.0.0.1:8787/api/health"
-
-          if ($health.status -ne "REAL") {
-            throw "L'API locale n'a pas retourné REAL."
-          }
-
-          $dashboard = Invoke-RestMethod `
-            -Uri "http://127.0.0.1:8787/api/dashboard"
-
-          if ($null -eq $dashboard) {
-            throw "Le dashboard réel n'a retourné aucune donnée."
-          }
-
-      - name: Stop local server
-        if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path "$env:GITHUB_WORKSPACE\alpha_prime_server.pid") {
-            $pid = Get-Content "$env:GITHUB_WORKSPACE\alpha_prime_server.pid"
-
-            try {
-              Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
-            }
-            catch {
-            }
-          }
-
-      # --------------------------------------------------------
-      # WINDOWS BUILD
-      # --------------------------------------------------------
-
-      - name: Build Windows application
-        run: python build_executable.py
-
-      - name: Verify Windows executable exists
-        shell: pwsh
-        run: |
-          $exe = Join-Path $PWD "dist\AlphaPrime\AlphaPrime.exe"
-
-          if (-not (Test-Path $exe)) {
-            throw "AlphaPrime.exe absent."
-          }
-
-          $size = (Get-Item $exe).Length
-
-          if ($size -le 0) {
-            throw "AlphaPrime.exe est vide."
-          }
-
-          Write-Host "Real Windows executable: $size bytes"
-
-      # --------------------------------------------------------
-      # REAL WINDOWS EXECUTION
-      # --------------------------------------------------------
-
-      - name: Launch real Windows executable
-        shell: pwsh
-        run: |
-          $exe = Join-Path $PWD "dist\AlphaPrime\AlphaPrime.exe"
-
-          $process = Start-Process `
-            -FilePath $exe `
-            -PassThru
-
-          Start-Sleep -Seconds 8
-
-          if ($process.HasExited) {
-            throw "Alpha Prime s'est arrêté immédiatement après son lancement."
-          }
-
-          Write-Host "Alpha Prime process is running: PID=$($process.Id)"
-
-          Stop-Process -Id $process.Id -Force
-
-      - name: Upload desktop reality evidence
+      # 6. Publie l'APK comme artefact téléchargeable
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AlphaPrime-Desktop-Reality-Evidence
-          path: |
-            desktop_engine/reality-result.json
+          name: prime-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Upload Windows application
-        uses: actions/upload-artifact@v4
-        with:
-          name: AlphaPrime-Windows
-          path: desktop_engine/dist/AlphaPrime/
-          if-no-files-found: error
-
-
-  # ============================================================
-  # 3. REAL ANDROID / IOS BUILDS
-  #
-  # IMPORTANT:
-  # EAS builds are real binaries.
-  # They are NOT evidence that a physical device works.
-  # ============================================================
-
-  mobile-builds:
-    name: Android APK + iOS IPA — Real Build
-    needs: mobile-source-reality
-    runs-on: ubuntu-latest
-
+  build-windows:
+    name: Build Windows (Electron)
+    runs-on: windows-latest
     steps:
-
-      - name: Checkout
+      # 1. Récupère le code du dépôt
+      - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # 2. Installe Node.js
+      - name: Configuration de Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          node-version: '22'
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Expo diagnostics
-        run: npx expo-doctor
-
-      - name: Install EAS CLI
-        run: npm install --global eas-cli@19.1.0
-
-      - name: Require EAS credentials
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          test -n "$EXPO_TOKEN"
-
-      # --------------------------------------------------------
-      # REAL ANDROID BINARY
-      # --------------------------------------------------------
-
-      - name: Build real Android APK
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          eas build \
-            --platform android \
-            --profile device-android \
-            --non-interactive \
-            --wait
-
-      - name: Download Android APK
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # 3. Installe les dépendances et build le web (serveur TanStack Start)
+      - name: Installation et build web
         shell: bash
         run: |
-          set -euo pipefail
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run build
 
-          mkdir -p artifacts/android
-
-          eas build:download \
-            --platform android \
-            --non-interactive
-
-          APK=$(find . -type f -name "*.apk" | head -1)
-
-          test -n "$APK"
-
-          cp "$APK" artifacts/android/AlphaPrime-device.apk
-
-          test -s artifacts/android/AlphaPrime-device.apk
-
-      # --------------------------------------------------------
-      # REAL IOS BINARY
-      # --------------------------------------------------------
-
-      - name: Build real iOS IPA
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          eas build \
-            --platform ios \
-            --profile device-ios \
-            --refresh-ad-hoc-provisioning-profile \
-            --non-interactive \
-            --wait
-
-      - name: Download iOS IPA
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # 4. Provisionne automatiquement le wrapper Electron s'il n'existe pas encore
+      #    (crée electron/main.js et complète package.json : champ "main" + config "build")
+      - name: Provisionne le wrapper Electron
         shell: bash
         run: |
-          set -euo pipefail
+          mkdir -p electron
 
-          mkdir -p artifacts/ios
+          if [ ! -f electron/main.js ]; then
+          cat > electron/main.js << 'MAINJS'
+          // electron/main.js — généré automatiquement par le workflow CI.
+          // NON VÉRIFIÉ — le chemin du serveur buildé (.output/server/index.mjs) dépend
+          // de la config TanStack Start (nitro/vinxi) ; ajuste SERVER_ENTRY si le build échoue.
 
-          eas build:download \
-            --platform ios \
-            --non-interactive
+          const { app, BrowserWindow } = require('electron');
+          const { spawn } = require('child_process');
+          const path = require('path');
 
-          IPA=$(find . -type f -name "*.ipa" | head -1)
+          const PORT = 3000;
+          const SERVER_ENTRY = path.join(__dirname, '..', '.output', 'server', 'index.mjs');
 
-          test -n "$IPA"
+          let serverProcess;
+          let mainWindow;
 
-          cp "$IPA" artifacts/ios/AlphaPrime-device.ipa
+          function startServer() {
+            return new Promise((resolve, reject) => {
+              serverProcess = spawn(process.execPath, [SERVER_ENTRY], {
+                env: { ...process.env, PORT: String(PORT) },
+                stdio: 'pipe',
+              });
 
-          test -s artifacts/ios/AlphaPrime-device.ipa
+              serverProcess.stdout.on('data', (data) => {
+                console.log(`[server] ${data}`);
+                if (data.toString().includes('listening') || data.toString().includes(String(PORT))) {
+                  resolve();
+                }
+              });
 
-      - name: Publish real mobile binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: AlphaPrime-Real-Mobile-Binaries
-          path: artifacts/
-          if-no-files-found: error
+              serverProcess.stderr.on('data', (data) => console.error(`[server] ${data}`));
+              serverProcess.on('error', reject);
 
+              setTimeout(resolve, 3000);
+            });
+          }
 
-  # ============================================================
-  # 4. REAL PHYSICAL ANDROID
-  # ============================================================
+          function createWindow() {
+            mainWindow = new BrowserWindow({
+              width: 1280,
+              height: 800,
+              webPreferences: {
+                contextIsolation: true,
+                nodeIntegration: false,
+              },
+            });
 
-  physical-android:
-    name: Android — PHYSICAL DEVICE REALITY
-    if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.verify_physical_devices == true
+            mainWindow.loadURL(`http://localhost:${PORT}`);
+          }
 
-    needs: mobile-builds
+          app.whenReady().then(async () => {
+            await startServer();
+            createWindow();
 
-    runs-on:
-      - self-hosted
-      - android-device
+            app.on('activate', () => {
+              if (BrowserWindow.getAllWindows().length === 0) createWindow();
+            });
+          });
 
-    steps:
+          app.on('window-all-closed', () => {
+            if (serverProcess) serverProcess.kill();
+            if (process.platform !== 'darwin') app.quit();
+          });
 
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: AlphaPrime-Real-Mobile-Binaries
-          path: artifacts
-
-      - name: Require exactly one physical Android device
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          adb start-server
-
-          SERIALS=$(
-            adb devices |
-            awk 'NR>1 && $2=="device" {print $1}'
-          )
-
-          COUNT=$(
-            printf '%s\n' "$SERIALS" |
-            sed '/^$/d' |
-            wc -l |
-            tr -d ' '
-          )
-
-          test "$COUNT" = "1"
-
-          SERIAL=$(printf '%s\n' "$SERIALS" | head -1)
-
-          MODEL=$(
-            adb -s "$SERIAL" shell getprop ro.product.model |
-            tr -d '\r'
-          )
-
-          QEMU=$(
-            adb -s "$SERIAL" shell getprop ro.kernel.qemu |
-            tr -d '\r'
-          )
-
-          QEMU_BOOT=$(
-            adb -s "$SERIAL" shell getprop ro.boot.qemu |
-            tr -d '\r'
-          )
-
-          echo "Physical Android device: $MODEL"
-
-          test "${QEMU:-0}" != "1"
-          test "${QEMU_BOOT:-0}" != "1"
-
-          echo "ANDROID_DEVICE_SERIAL=$SERIAL" >> "$GITHUB_ENV"
-
-      - name: Verify real device information
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          adb -s "$ANDROID_DEVICE_SERIAL" shell getprop ro.product.manufacturer
-          adb -s "$ANDROID_DEVICE_SERIAL" shell getprop ro.product.model
-          adb -s "$ANDROID_DEVICE_SERIAL" shell getprop ro.build.version.release
-          adb -s "$ANDROID_DEVICE_SERIAL" shell getprop ro.product.cpu.abi
-
-      - name: Install real Alpha Prime APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="$GITHUB_WORKSPACE/artifacts/android/AlphaPrime-device.apk"
-
-          adb -s "$ANDROID_DEVICE_SERIAL" install -r "$APK"
-
-      - name: Verify real Android package
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          adb -s "$ANDROID_DEVICE_SERIAL" shell dumpsys package \
-            "$ANDROID_PACKAGE" |
-            grep -q "$ANDROID_PACKAGE"
-
-      - name: Launch real Android application
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          adb -s "$ANDROID_DEVICE_SERIAL" shell monkey \
-            -p "$ANDROID_PACKAGE" 1
-
-          sleep 8
-
-          PID=$(
-            adb -s "$ANDROID_DEVICE_SERIAL" shell pidof "$ANDROID_PACKAGE" |
-            tr -d '\r'
-          )
-
-          test -n "$PID"
-
-      - name: Verify real Android UI exists
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          adb -s "$ANDROID_DEVICE_SERIAL" shell \
-            uiautomator dump /sdcard/alpha_prime_ui.xml >/dev/null
-
-          adb -s "$ANDROID_DEVICE_SERIAL" shell \
-            cat /sdcard/alpha_prime_ui.xml |
-            grep -q "Alpha Prime"
-
-      - name: Physical Android is actually verified
-        run: |
-          echo "ANDROID_DEVICE_VERIFIED=true"
-
-
-  # ============================================================
-  # 5. REAL PHYSICAL IOS
-  # ============================================================
-
-  physical-ios:
-    name: iOS — PHYSICAL DEVICE REALITY
-    if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.verify_physical_devices == true
-
-    needs: mobile-builds
-
-    runs-on:
-      - self-hosted
-      - macOS
-      - ios-device
-
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: AlphaPrime-Real-Mobile-Binaries
-          path: artifacts
-
-      - name: Require real physical iPhone/iPad
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DEVICES=$(xcrun devicectl list devices)
-
-          printf '%s\n' "$DEVICES"
-
-          UDID="${IOS_DEVICE_UDID:-}"
-
-          if [ -z "$UDID" ]; then
-            UDID=$(
-              printf '%s\n' "$DEVICES" |
-              awk '/iPhone|iPad/ && /available/ {print $2; exit}'
-            )
+          app.on('before-quit', () => {
+            if (serverProcess) serverProcess.kill();
+          });
+          MAINJS
           fi
 
-          test -n "$UDID"
+          cat > /tmp/patch-package.cjs << 'PATCHJS'
+          const fs = require('fs');
+          const path = require('path');
+          const pkgPath = path.join(process.cwd(), 'package.json');
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
-          printf '%s\n' "$DEVICES" | grep -q "$UDID"
+          if (!pkg.main || !pkg.main.includes('electron')) {
+            pkg.main = 'electron/main.js';
+          }
 
-          echo "IOS_DEVICE_UDID=$UDID" >> "$GITHUB_ENV"
+          if (!pkg.build) {
+            pkg.build = {
+              appId: 'app.prime.cuisine',
+              productName: 'Prime',
+              files: ['electron/**/*', '.output/**/*', 'package.json'],
+              directories: { output: 'dist' },
+              win: { target: 'nsis' },
+            };
+          }
 
-      - name: Install real iOS application
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+          console.log('package.json prêt pour le build Electron.');
+          PATCHJS
+
+          node /tmp/patch-package.cjs
+          npm install --no-save electron electron-builder
+
+      # 5. Build l'exécutable Windows
+      - name: Build exécutable Windows
         shell: bash
-        run: |
-          set -euo pipefail
+        run: npx electron-builder --win --publish never
 
-          IPA="$GITHUB_WORKSPACE/artifacts/ios/AlphaPrime-device.ipa"
-
-          xcrun devicectl device install app \
-            --device "$IOS_DEVICE_UDID" \
-            "$IPA"
-
-      - name: Launch real iOS application
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          xcrun devicectl device process launch \
-            --device "$IOS_DEVICE_UDID" \
-            "$IOS_BUNDLE_ID"
-
-      - name: Verify physical iOS application
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DEVICES=$(xcrun devicectl list devices)
-
-          printf '%s\n' "$DEVICES" | grep -q "$IOS_DEVICE_UDID"
-
-      - name: Physical iOS is actually verified
-        run: |
-          echo "IOS_DEVICE_VERIFIED=true"
-
-
-  # ============================================================
-  # 6. BUILD GATE
-  #
-  # This gate NEVER claims physical-device verification.
-  # ============================================================
-
-  build-gate:
-    name: BUILD VERIFIED — Physical hardware not claimed
-    needs:
-      - desktop-reality
-      - mobile-builds
-
-    if: >
-      always() &&
-      needs.desktop-reality.result == 'success' &&
-      needs.mobile-builds.result == 'success' &&
-      !(
-        github.event_name == 'workflow_dispatch' &&
-        inputs.verify_physical_devices == true
-      )
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Truthful build gate
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "WINDOWS_BUILD_VERIFIED=true"
-          echo "ANDROID_BUILD_VERIFIED=true"
-          echo "IOS_BUILD_VERIFIED=true"
-
-          echo "ANDROID_PHYSICAL_DEVICE_VERIFIED=false"
-          echo "IOS_PHYSICAL_DEVICE_VERIFIED=false"
-
-          echo "RELEASE_GATE=BUILD_ONLY"
-
-          echo ""
-          echo "IMPORTANT:"
-          echo "Les binaires sont réellement construits."
-          echo "Aucun appareil physique n'a été utilisé."
-          echo "Aucune compatibilité physique n'est donc déclarée."
-
-
-  # ============================================================
-  # 7. FINAL PHYSICAL RELEASE GATE
-  # ============================================================
-
-  release-gate:
-    name: RELEASE VERIFIED — Physical Reality
-    needs:
-      - desktop-reality
-      - mobile-builds
-      - physical-android
-      - physical-ios
-
-    if: >
-      always() &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.verify_physical_devices == true &&
-      needs.desktop-reality.result == 'success' &&
-      needs.mobile-builds.result == 'success' &&
-      needs.physical-android.result == 'success' &&
-      needs.physical-ios.result == 'success'
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Final truthful release gate
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "WINDOWS_BUILD_VERIFIED=true"
-          echo "ANDROID_BUILD_VERIFIED=true"
-          echo "IOS_BUILD_VERIFIED=true"
-
-          echo "ANDROID_PHYSICAL_DEVICE_VERIFIED=true"
-          echo "IOS_PHYSICAL_DEVICE_VERIFIED=true"
-
-          echo "RELEASE_GATE=VERIFIED"
-
-          echo ""
-          echo "Alpha Prime a été construit et exécuté réellement"
-          echo "sur les appareils physiques correspondant aux validations."
+      # 6. Publie l'exécutable comme artefact téléchargeable
+      - name: Upload exécutable Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: prime-release-windows
+          path: dist/*.exe
+          if-no-files-found: error
