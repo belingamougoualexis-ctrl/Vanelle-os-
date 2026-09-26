@@ -1,4 +1,4 @@
-name: Build and Sign Release APK
+name: Alpha Prime — Build APK & Windows
 
 on:
   push:
@@ -17,37 +17,23 @@ jobs:
       - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      # 2. Installe Node.js (LTS courant)
+      # 2. Installe Node.js
       - name: Configuration de Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
-      # 3. Décompresse le zip source (déposé à la racine du dépôt) si le code n'est pas déjà présent
-      - name: Décompresse le zip source si présent
-        run: |
-          if [ ! -f package.json ]; then
-            ZIP=$(find . -maxdepth 1 -name '*.zip' | head -1)
-            if [ -n "$ZIP" ]; then
-              echo "Décompression de $ZIP"
-              unzip -o "$ZIP" -d .
-            fi
-          fi
-
-      # 4. Installe les dépendances et build le web
-      - name: Installation et build web
+      # 3. Installe les dépendances JavaScript (télécharge aussi les libs natives de llama.rn)
+      - name: Installation des dépendances
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
-          npm run build
 
-      # 5. Ajoute/synchronise le projet Android Capacitor
-      - name: Sync Capacitor Android
-        run: |
-          if [ ! -d android ]; then npx cap add android; fi
-          npx cap sync android
+      # 4. Génère le projet natif Android (Expo prebuild)
+      - name: Génération du projet Android natif
+        run: npx expo prebuild --platform android --no-interactive
 
-      # 6. Build et signe l'APK release avec Gradle
+      # 5. Build et signe l'APK release avec Gradle
       - name: Build et signature de l'APK
         working-directory: android
         env:
@@ -64,161 +50,56 @@ jobs:
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
-      # 7. Publie l'APK comme artefact téléchargeable
+      # 6. Publie l'APK comme artefact téléchargeable
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: prime-release-apk
+          name: alphaprime-release-apk
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
   build-windows:
-    name: Build Windows (Electron)
+    name: Build Windows (moteur desktop Python)
     runs-on: windows-latest
     steps:
       # 1. Récupère le code du dépôt
       - name: Checkout du dépôt
         uses: actions/checkout@v4
 
-      # 2. Installe Node.js
-      - name: Configuration de Node.js
-        uses: actions/setup-node@v4
+      # 2. Installe Python
+      - name: Configuration de Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '22'
-          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: desktop_engine/requirements.txt
 
-      # 3. Décompresse le zip source (déposé à la racine du dépôt) si le code n'est pas déjà présent
-      - name: Décompresse le zip source si présent
+      # 3. Installe les dépendances Python
+      - name: Installation des dépendances
+        working-directory: desktop_engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # 4. Build l'exécutable Windows
+      - name: Build de l'exécutable
+        working-directory: desktop_engine
+        run: python build_executable.py
+
+      # 5. Vérifie que l'exécutable a bien été produit
+      - name: Vérification de l'exécutable
+        working-directory: desktop_engine
         shell: bash
         run: |
-          if [ ! -f package.json ]; then
-            ZIP=$(find . -maxdepth 1 -name '*.zip' | head -1)
-            if [ -n "$ZIP" ]; then
-              echo "Décompression de $ZIP"
-              unzip -o "$ZIP" -d .
-            fi
-          fi
+          EXE=$(find dist -iname '*.exe' | head -1)
+          test -n "$EXE"
+          test -s "$EXE"
+          echo "Exécutable trouvé : $EXE"
 
-      # 4. Installe les dépendances et build le web (serveur TanStack Start)
-      - name: Installation et build web
-        shell: bash
-        run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
-          npm run build
-
-      # 5. Provisionne automatiquement le wrapper Electron s'il n'existe pas encore
-      #    (crée electron/main.js et complète package.json : champ "main" + config "build")
-      - name: Provisionne le wrapper Electron
-        shell: bash
-        run: |
-          mkdir -p electron
-
-          if [ ! -f electron/main.js ]; then
-          cat > electron/main.js << 'MAINJS'
-          // electron/main.js — généré automatiquement par le workflow CI.
-          // NON VÉRIFIÉ — le chemin du serveur buildé (.output/server/index.mjs) dépend
-          // de la config TanStack Start (nitro/vinxi) ; ajuste SERVER_ENTRY si le build échoue.
-
-          const { app, BrowserWindow } = require('electron');
-          const { spawn } = require('child_process');
-          const path = require('path');
-
-          const PORT = 3000;
-          const SERVER_ENTRY = path.join(__dirname, '..', '.output', 'server', 'index.mjs');
-
-          let serverProcess;
-          let mainWindow;
-
-          function startServer() {
-            return new Promise((resolve, reject) => {
-              serverProcess = spawn(process.execPath, [SERVER_ENTRY], {
-                env: { ...process.env, PORT: String(PORT) },
-                stdio: 'pipe',
-              });
-
-              serverProcess.stdout.on('data', (data) => {
-                console.log(`[server] ${data}`);
-                if (data.toString().includes('listening') || data.toString().includes(String(PORT))) {
-                  resolve();
-                }
-              });
-
-              serverProcess.stderr.on('data', (data) => console.error(`[server] ${data}`));
-              serverProcess.on('error', reject);
-
-              setTimeout(resolve, 3000);
-            });
-          }
-
-          function createWindow() {
-            mainWindow = new BrowserWindow({
-              width: 1280,
-              height: 800,
-              webPreferences: {
-                contextIsolation: true,
-                nodeIntegration: false,
-              },
-            });
-
-            mainWindow.loadURL(`http://localhost:${PORT}`);
-          }
-
-          app.whenReady().then(async () => {
-            await startServer();
-            createWindow();
-
-            app.on('activate', () => {
-              if (BrowserWindow.getAllWindows().length === 0) createWindow();
-            });
-          });
-
-          app.on('window-all-closed', () => {
-            if (serverProcess) serverProcess.kill();
-            if (process.platform !== 'darwin') app.quit();
-          });
-
-          app.on('before-quit', () => {
-            if (serverProcess) serverProcess.kill();
-          });
-          MAINJS
-          fi
-
-          cat > /tmp/patch-package.cjs << 'PATCHJS'
-          const fs = require('fs');
-          const path = require('path');
-          const pkgPath = path.join(process.cwd(), 'package.json');
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-
-          if (!pkg.main || !pkg.main.includes('electron')) {
-            pkg.main = 'electron/main.js';
-          }
-
-          if (!pkg.build) {
-            pkg.build = {
-              appId: 'app.prime.cuisine',
-              productName: 'Prime',
-              files: ['electron/**/*', '.output/**/*', 'package.json'],
-              directories: { output: 'dist' },
-              win: { target: 'nsis' },
-            };
-          }
-
-          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-          console.log('package.json prêt pour le build Electron.');
-          PATCHJS
-
-          node /tmp/patch-package.cjs
-          npm install --no-save electron electron-builder
-
-      # 6. Build l'exécutable Windows
-      - name: Build exécutable Windows
-        shell: bash
-        run: npx electron-builder --win --publish never
-
-      # 7. Publie l'exécutable comme artefact téléchargeable
+      # 6. Publie l'exécutable comme artefact téléchargeable
       - name: Upload exécutable Windows
         uses: actions/upload-artifact@v4
         with:
-          name: prime-release-windows
-          path: dist/*.exe
+          name: alphaprime-release-windows
+          path: desktop_engine/dist/
           if-no-files-found: error
