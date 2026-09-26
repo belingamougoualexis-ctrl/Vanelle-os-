@@ -18,7 +18,7 @@ jobs:
     name: '1 — Vérification source (mobile)'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Vérifier la structure du dépôt
         shell: bash
@@ -31,12 +31,12 @@ jobs:
           test -f assets/icon.png
           echo 'Structure mobile : OK'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
+          cache: 'npm'
 
-      - run: npm install --no-audit --no-fund
+      - run: npm ci || npm install --no-audit --no-fund
 
       - name: Intégrité du build (release gate)
         run: python3 scripts/release_gate.py
@@ -50,7 +50,7 @@ jobs:
     name: '2 — Vérification source (desktop)'
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Vérifier la structure desktop
         shell: pwsh
@@ -66,7 +66,7 @@ jobs:
           }
           Write-Host 'Structure desktop : OK'
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -98,9 +98,9 @@ jobs:
     needs: verify-desktop
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -163,15 +163,15 @@ jobs:
     needs: verify-source
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
+          cache: 'npm'
 
-      - run: npm install --no-audit --no-fund
-      - run: npm install --global eas-cli@19.1.0
+      - run: npm ci || npm install --no-audit --no-fund
+      - run: npm install --global eas-cli
 
       - name: Vérifier le token EAS
         env:
@@ -182,7 +182,7 @@ jobs:
       - name: Build APK release (signé, credentials gérés par EAS)
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas build --platform android --profile device-android --non-interactive --wait
+        run: npx eas-cli build --platform android --profile device-android --non-interactive --wait
 
       - name: Télécharger l'APK
         env:
@@ -191,10 +191,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/android
-          eas build:download --platform android --non-interactive
-          APK=$(find . -type f -name '*.apk' -not -path './node_modules/*' | head -1)
-          test -n "$APK"
-          cp "$APK" artifacts/android/AlphaPrime-signed.apk
+          npx eas-cli build:download --platform android --output artifacts/android/AlphaPrime-signed.apk --non-interactive
+          test -s artifacts/android/AlphaPrime-signed.apk
 
       - uses: actions/upload-artifact@v4
         with:
@@ -209,9 +207,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: AlphaPrime-Windows, path: check/windows }
+        with:
+          name: AlphaPrime-Windows
+          path: check/windows
       - uses: actions/download-artifact@v4
-        with: { name: AlphaPrime-Android, path: check/android }
+        with:
+          name: AlphaPrime-Android
+          path: check/android
 
       - name: Valider les livrables
         shell: bash
