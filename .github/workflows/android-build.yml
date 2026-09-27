@@ -21,8 +21,8 @@ jobs:
       - name: Configuration de Java (JDK 17)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
       - name: Configuration Android SDK
         run: |
@@ -37,22 +37,23 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          (set +o pipefail; yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null)
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          set +o pipefail
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          set -o pipefail
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Extraire le projet NEXUS + compiler l'APK release
+      - name: Extraire le projet NEXUS + compiler l APK release
         run: |
           set -euo pipefail
-          echo "=== Contenu du dépôt ==="
+          echo "=== Contenu du depot ==="
           ls -la
 
-          find . -maxdepth 2 -type f -name "*.zip" | while read -r z; do
-            echo ">>> Décompression de $z"
+          find . -maxdepth 2 -type f -name "*.zip" -print | while read -r z; do
+            echo ">>> Decompression de $z"
             unzip -o "$z"
           done
 
-          echo "=== Après décompression ==="
+          echo "=== Apres decompression ==="
           ls -la
 
           if [ -f "./nexus/settings.gradle.kts" ]; then
@@ -60,9 +61,9 @@ jobs:
           elif [ -f "./settings.gradle.kts" ]; then
             ANDROID_DIR="."
           else
-            GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null | grep -v node_modules | head -n 1 || true)
+            GRADLE_FILE=$(find . -name "settings.gradle.kts" -o -name "settings.gradle" 2>/dev/null | grep -v node_modules | head -n 1 || true)
             if [ -z "$GRADLE_FILE" ]; then
-              echo "ERREUR : Aucun settings.gradle trouvé après décompression."
+              echo "ERREUR : Aucun settings.gradle trouve"
               find . -maxdepth 5 -type f | head -50
               exit 1
             fi
@@ -76,13 +77,6 @@ jobs:
           touch gradle.properties
           grep -q "android.useAndroidX" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
           grep -q "org.gradle.jvmargs" gradle.properties || echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
-
-          for f in $(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) 2>/dev/null); do
-            sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f" || true
-            sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f" || true
-            sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f" || true
-            sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f" || true
-          done
 
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
@@ -101,7 +95,7 @@ jobs:
 
           echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
 
-      - name: Alignement et Signature de l'APK (vrai Keystore)
+      - name: Alignement et Signature de l APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -111,58 +105,33 @@ jobs:
           set -euo pipefail
 
           UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" | head -n 1 || true)
-          if [ -z "${UNSIGNED_APK:-}" ] || [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Erreur : Aucun APK trouvé."
+          if [ -z "\( {UNSIGNED_APK}" ] || [ ! -f " \){UNSIGNED_APK}" ]; then
+            echo "Erreur : Aucun APK trouve."
             find . -name "*.apk" 2>/dev/null || true
             exit 1
           fi
-          echo "APK trouvé : $UNSIGNED_APK"
+          echo "APK trouve : ${UNSIGNED_APK}"
 
-          if [ -z "\( {KEYSTORE_BASE64:-}" ] || [ -z " \){KEYSTORE_PASSWORD:-}" ] || [ -z "\( {KEY_ALIAS:-}" ] || [ -z " \){KEY_PASSWORD:-}" ]; then
-            echo "ERREUR : secrets KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD manquants."
-            echo "Ajoutez-les dans Settings > Secrets and variables > Actions du dépôt."
+          if [ -z "\( {KEYSTORE_BASE64}" ] || [ -z " \){KEYSTORE_PASSWORD}" ] || [ -z "\( {KEY_ALIAS}" ] || [ -z " \){KEY_PASSWORD}" ]; then
+            echo "ERREUR : secrets KEYSTORE manquants."
             exit 1
           fi
 
-          echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+          echo "${KEYSTORE_BASE64}" | base64 -d > release.jks
 
-          if [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ]; then
-            SDK="$ANDROID_HOME"
-          elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
-            SDK="$ANDROID_SDK_ROOT"
-          elif [ -d "$HOME/android-sdk" ]; then
-            SDK="$HOME/android-sdk"
-          elif [ -d "$HOME/Android/Sdk" ]; then
-            SDK="$HOME/Android/Sdk"
-          elif [ -d "/usr/local/lib/android/sdk" ]; then
-            SDK="/usr/local/lib/android/sdk"
-          else
-            ZIPALIGN_PATH=$(find /usr -name zipalign 2>/dev/null | head -n 1 || true)
-            if [ -n "$ZIPALIGN_PATH" ]; then
-              SDK=\( (dirname " \)(dirname "$(dirname "$ZIPALIGN_PATH")")")
-            else
-              echo "ERREUR : SDK Android introuvable"
-              exit 1
-            fi
-          fi
-          echo "SDK=$SDK"
+          SDK="\( {ANDROID_SDK_ROOT:- \){ANDROID_HOME:-$HOME/android-sdk}}"
+          echo "SDK=${SDK}"
 
-          BUILD_TOOLS_DIR=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
-          if [ -z "${BUILD_TOOLS_DIR:-}" ] || [ ! -d "$BUILD_TOOLS_DIR" ]; then
-            echo "ERREUR : build-tools introuvable sous $SDK"
-            ls -la "$SDK" 2>/dev/null || true
+          BUILD_TOOLS_DIR=\( (ls -d " \){SDK}"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "\( {BUILD_TOOLS_DIR}" ] || [ ! -d " \){BUILD_TOOLS_DIR}" ]; then
+            echo "ERREUR : build-tools introuvable sous ${SDK}"
+            ls -la "${SDK}" 2>/dev/null || true
             exit 1
           fi
-          echo "Build-tools : $BUILD_TOOLS_DIR"
+          echo "Build-tools : ${BUILD_TOOLS_DIR}"
 
-          "$BUILD_TOOLS_DIR/zipalign" -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
-          "$BUILD_TOOLS_DIR/apksigner" sign \
-            --ks release.jks \
-            --ks-pass "pass:$KEYSTORE_PASSWORD" \
-            --key-pass "pass:$KEY_PASSWORD" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --out NEXUS-release-signed.apk \
-            app-aligned.apk
+          "\( {BUILD_TOOLS_DIR}/zipalign" -f -v -p 4 " \){UNSIGNED_APK}" app-aligned.apk
+          "\( {BUILD_TOOLS_DIR}/apksigner" sign --ks release.jks --ks-pass "pass: \){KEYSTORE_PASSWORD}" --key-pass "pass:\( {KEY_PASSWORD}" --ks-key-alias " \){KEY_ALIAS}" --out NEXUS-release-signed.apk app-aligned.apk
 
           rm -f release.jks
           ls -la NEXUS-release-signed.apk
@@ -174,15 +143,15 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: NEXUS ${{ github.run_number }}
           body: |
-            APK release signé automatiquement (NEXUS — Android).
-            ATTENTION : désinstallez l'ancienne version avant d'installer celle-ci si la signature a changé.
+            APK release signe automatiquement (NEXUS Android).
+            Desinstallez l ancienne version avant d installer celle-ci si la signature a change.
           files: NEXUS-release-signed.apk
           draft: false
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lien de téléchargement
+      - name: Lien de telechargement
         run: |
           echo "## NEXUS - APK disponible" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
