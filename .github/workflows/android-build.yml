@@ -39,69 +39,73 @@ jobs:
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           (set +o pipefail; yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null)
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Configuration Node.js (nécessaire car AlphaPrime est un projet Expo)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.13.1'
-
-      - name: Extraire le projet + compiler l'APK release
+      - name: Extraire le projet NEXUS + compiler l'APK release
         run: |
           set -euo pipefail
           echo "=== Contenu du dépôt ==="
           ls -la
-          # Extraire tous les ZIP présents à la racine du dépôt
-          # (ex: AlphaPrime_CI_FIXED_READY_TO_PUSH_2026-09-26.zip)
+
+          # Extraire tous les ZIP à la racine (ex: NEXUS-Android-v1_2_0-final.zip)
           find . -maxdepth 2 -type f -name "*.zip" | while read -r z; do
             echo ">>> Décompression de $z"
             unzip -o "$z"
           done
+
           echo "=== Après décompression ==="
           ls -la
-          npm install --no-audit --no-fund
-          npx expo prebuild --platform android --no-install
-          echo "=== Après génération du projet natif ==="
-          ls -la
-          find . -name "settings.gradle*" -o -name "gradlew" | head -20
-          # Localiser le projet Android
-          if [ -f "./android/settings.gradle.kts" ]; then
-            ANDROID_DIR="./android"
+
+          # Localiser le projet Android NEXUS
+          if [ -f "./nexus/settings.gradle.kts" ]; then
+            ANDROID_DIR="./nexus"
           elif [ -f "./settings.gradle.kts" ]; then
             ANDROID_DIR="."
           else
             GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null \
               | grep -v node_modules | head -n 1 || true)
             if [ -z "$GRADLE_FILE" ]; then
-              echo "ERREUR : Aucun settings.gradle trouvé après génération."
+              echo "ERREUR : Aucun settings.gradle trouvé après décompression."
               find . -maxdepth 5 -type f | head -50
               exit 1
             fi
             ANDROID_DIR=$(dirname "$GRADLE_FILE")
           fi
+
           echo "ANDROID_DIR=$ANDROID_DIR"
           cd "$ANDROID_DIR"
           ls -la
-          # Gradle properties minimales
+
           touch gradle.properties
           grep -q "android.useAndroidX" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
-          grep -q "android.enableJetifier" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
-          # Désactiver minify si présent
+          grep -q "org.gradle.jvmargs" gradle.properties || echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
+
           for f in $(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) 2>/dev/null); do
             sed -i 's/isMinifyEnabled\s*=\s*true/isMinifyEnabled = false/g' "$f" || true
             sed -i 's/isShrinkResources\s*=\s*true/isShrinkResources = false/g' "$f" || true
             sed -i 's/minifyEnabled\s\+true/minifyEnabled false/g' "$f" || true
             sed -i 's/shrinkResources\s\+true/shrinkResources false/g' "$f" || true
           done
-          if [ ! -f "./gradlew" ]; then
-            echo "ERREUR : gradlew manquant dans $ANDROID_DIR"
-            ls -la
-            exit 1
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            if ./gradlew --version >/dev/null 2>&1; then
+              ./gradlew :app:assembleRelease --stacktrace --no-daemon
+            else
+              echo "gradlew invalide → installation Gradle 8.11.1"
+              curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+              unzip -q /tmp/gradle.zip -d /tmp
+              /tmp/gradle-8.11.1/bin/gradle :app:assembleRelease --stacktrace --no-daemon
+            fi
+          else
+            echo "gradlew absent → installation Gradle 8.11.1"
+            curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+            unzip -q /tmp/gradle.zip -d /tmp
+            /tmp/gradle-8.11.1/bin/gradle :app:assembleRelease --stacktrace --no-daemon
           fi
-          chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --stacktrace --no-daemon
-          # Remonter le chemin de l'APK pour les étapes suivantes
+
           echo "ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+
       - name: Alignement et Signature de l'APK (vrai Keystore)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -117,18 +121,21 @@ jobs:
             exit 1
           fi
           echo "APK trouvé : $UNSIGNED_APK"
-          if [ -z "${KEYSTORE_BASE64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
+
+          if [ -z "\( {KEYSTORE_BASE64:-}" ] || [ -z " \){KEYSTORE_PASSWORD:-}" ] || [ -z "\( {KEY_ALIAS:-}" ] || [ -z " \){KEY_PASSWORD:-}" ]; then
             echo "ERREUR : secrets KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD manquants."
             echo "Ajoutez-les dans Settings > Secrets and variables > Actions du dépôt."
             exit 1
           fi
-          # Reconstitue le vrai fichier .jks à partir du secret encodé en base64
+
           echo "$KEYSTORE_BASE64" | base64 -d > release.jks
-          # Résoudre le SDK Android
+
           if [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ]; then
             SDK="$ANDROID_HOME"
           elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
             SDK="$ANDROID_SDK_ROOT"
+          elif [ -d "$HOME/android-sdk" ]; then
+            SDK="$HOME/android-sdk"
           elif [ -d "$HOME/Android/Sdk" ]; then
             SDK="$HOME/Android/Sdk"
           elif [ -d "/usr/local/lib/android/sdk" ]; then
@@ -136,42 +143,44 @@ jobs:
           else
             ZIPALIGN_PATH=$(find /usr -name zipalign 2>/dev/null | head -n 1 || true)
             if [ -n "$ZIPALIGN_PATH" ]; then
-              SDK=$(dirname "$(dirname "$(dirname "$ZIPALIGN_PATH")")")
+              SDK=\( (dirname " \)(dirname "$(dirname "$ZIPALIGN_PATH")")")
             else
               echo "ERREUR : SDK Android introuvable"
               exit 1
             fi
           fi
           echo "SDK=$SDK"
+
           BUILD_TOOLS_DIR=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
           if [ -z "${BUILD_TOOLS_DIR:-}" ] || [ ! -d "$BUILD_TOOLS_DIR" ]; then
             echo "ERREUR : build-tools introuvable sous $SDK"
             ls -la "$SDK" 2>/dev/null || true
-            find /usr -name zipalign 2>/dev/null | head -10 || true
             exit 1
           fi
           echo "Build-tools : $BUILD_TOOLS_DIR"
+
           "$BUILD_TOOLS_DIR/zipalign" -f -v -p 4 "$UNSIGNED_APK" app-aligned.apk
           "$BUILD_TOOLS_DIR/apksigner" sign \
             --ks release.jks \
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --key-pass "pass:$KEY_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
-            --out AlphaPrime-release-signed.apk \
+            --out NEXUS-release-signed.apk \
             app-aligned.apk
-          # Nettoyage : ne jamais laisser le keystore réel sur le runner
+
           rm -f release.jks
-          ls -la AlphaPrime-release-signed.apk
+          ls -la NEXUS-release-signed.apk
+
       - name: Publication sur GitHub Releases
         id: publish_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: Alpha Prime ${{ github.run_number }}
+          name: NEXUS ${{ github.run_number }}
           body: |
-            APK release signé automatiquement (Alpha Prime — Android).
+            APK release signé automatiquement (NEXUS — Android).
             ATTENTION : désinstallez l'ancienne version avant d'installer celle-ci si la signature a changé.
-          files: AlphaPrime-release-signed.apk
+          files: NEXUS-release-signed.apk
           draft: false
           prerelease: true
         env:
@@ -179,11 +188,11 @@ jobs:
 
       - name: Lien de téléchargement
         run: |
-          echo "## Alpha Prime - APK disponible" >> "$GITHUB_STEP_SUMMARY"
+          echo "## NEXUS - APK disponible" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Page de la release : ${{ steps.publish_release.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Téléchargement direct de l'APK :" >> "$GITHUB_STEP_SUMMARY"
-          for asset_url in $(echo '${{ steps.publish_release.outputs.assets }}' | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4); do
+          for asset_url in \( (echo ' \){{ steps.publish_release.outputs.assets }}' | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4); do
             echo "- $asset_url" >> "$GITHUB_STEP_SUMMARY"
           done
