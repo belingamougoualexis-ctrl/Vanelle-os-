@@ -47,7 +47,6 @@ jobs:
           echo "=== Contenu du dépôt ==="
           ls -la
 
-          # Extraire tous les ZIP à la racine (ex: NEXUS-Android-v1_2_0-final.zip)
           find . -maxdepth 2 -type f -name "*.zip" | while read -r z; do
             echo ">>> Décompression de $z"
             unzip -o "$z"
@@ -56,14 +55,12 @@ jobs:
           echo "=== Après décompression ==="
           ls -la
 
-          # Localiser le projet Android NEXUS
           if [ -f "./nexus/settings.gradle.kts" ]; then
             ANDROID_DIR="./nexus"
           elif [ -f "./settings.gradle.kts" ]; then
             ANDROID_DIR="."
           else
-            GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null \
-              | grep -v node_modules | head -n 1 || true)
+            GRADLE_FILE=$(find . \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null | grep -v node_modules | head -n 1 || true)
             if [ -z "$GRADLE_FILE" ]; then
               echo "ERREUR : Aucun settings.gradle trouvé après décompression."
               find . -maxdepth 5 -type f | head -50
@@ -92,13 +89,11 @@ jobs:
             if ./gradlew --version >/dev/null 2>&1; then
               ./gradlew :app:assembleRelease --stacktrace --no-daemon
             else
-              echo "gradlew invalide → installation Gradle 8.11.1"
               curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
               unzip -q /tmp/gradle.zip -d /tmp
               /tmp/gradle-8.11.1/bin/gradle :app:assembleRelease --stacktrace --no-daemon
             fi
           else
-            echo "gradlew absent → installation Gradle 8.11.1"
             curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
             unzip -q /tmp/gradle.zip -d /tmp
             /tmp/gradle-8.11.1/bin/gradle :app:assembleRelease --stacktrace --no-daemon
@@ -114,6 +109,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
+
           UNSIGNED_APK=$(find . -path "*/outputs/apk/release/*" -name "*.apk" | head -n 1 || true)
           if [ -z "${UNSIGNED_APK:-}" ] || [ ! -f "$UNSIGNED_APK" ]; then
             echo "Erreur : Aucun APK trouvé."
@@ -191,8 +187,3 @@ jobs:
           echo "## NEXUS - APK disponible" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Page de la release : ${{ steps.publish_release.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Téléchargement direct de l'APK :" >> "$GITHUB_STEP_SUMMARY"
-          for asset_url in \( (echo ' \){{ steps.publish_release.outputs.assets }}' | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4); do
-            echo "- $asset_url" >> "$GITHUB_STEP_SUMMARY"
-          done
