@@ -55,7 +55,10 @@ jobs:
             exit 1
           fi
 
-      - name: Alignement et Signature de l APK
+      # Signature RÉELLE avec le keystore du propriétaire (secrets GitHub)
+      # KEYSTORE_BASE64 = votre fichier .jks / .keystore en base64
+      # KEYSTORE_PASSWORD / KEY_PASSWORD / KEY_ALIAS = vos vraies clés
+      - name: Alignement et vraie signature APK (keystore propriétaire)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -63,6 +66,14 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          echo "=== Signature RÉELLE avec le keystore du propriétaire ==="
+          echo "Les secrets KEYSTORE_* doivent contenir VOS clés (pas une clé debug CI)."
+          if [ -z "\( {KEYSTORE_BASE64}" ] || [ -z " \){KEYSTORE_PASSWORD}" ] || [ -z "\( {KEY_ALIAS}" ] || [ -z " \){KEY_PASSWORD}" ]; then
+            echo "ERREUR : secrets de signature manquants."
+            echo "Ajoutez KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD"
+            echo "dans Settings > Secrets and variables > Actions"
+            exit 1
+          fi
           if [ -f nexus/scripts/ci-sign-release.sh ]; then
             bash nexus/scripts/ci-sign-release.sh
           elif [ -f scripts/ci-sign-release.sh ]; then
@@ -71,6 +82,8 @@ jobs:
             echo "Script de signature introuvable"
             exit 1
           fi
+          echo "=== APK signé avec le keystore propriétaire : NEXUS-release-signed.apk ==="
+          ls -la NEXUS-release-signed.apk
 
       - name: Publication sur GitHub Releases
         id: publish_release
@@ -79,8 +92,8 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: NEXUS ${{ github.run_number }}
           body: |
-            APK release signe automatiquement (NEXUS Android).
-            Desinstallez l ancienne version avant d installer celle-ci si la signature a change.
+            APK NEXUS signé avec le keystore propriétaire (vraie signature release).
+            Desinstallez l ancienne version avant d installer si la signature a change.
           files: NEXUS-release-signed.apk
           draft: false
           prerelease: true
@@ -89,6 +102,8 @@ jobs:
 
       - name: Lien de telechargement
         run: |
-          echo "## NEXUS - APK disponible" >> "$GITHUB_STEP_SUMMARY"
+          echo "## NEXUS - APK signé (keystore propriétaire)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Signature : vraie clé release (secrets KEYSTORE_* du dépôt)." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Page de la release : ${{ steps.publish_release.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
