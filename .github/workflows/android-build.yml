@@ -60,35 +60,74 @@ jobs:
         run: |
           set -euo pipefail
 
-          find . -maxdepth 2 -type f -name "*.zip" -exec unzip -o {} \;
+          echo "=== Extraction des archives du projet ==="
 
-          echo "=== Recherche du script de build ==="
+          find . -maxdepth 2 -type f -name "*.zip" -exec unzip -o {} \; || true
 
-          if [ -f nexus-android/scripts/ci-build-release.sh ]; then
-            bash nexus-android/scripts/ci-build-release.sh
+          echo "=== Vérification du projet Android ==="
 
-          elif [ -f nexus/scripts/ci-build-release.sh ]; then
-            bash nexus/scripts/ci-build-release.sh
+          if [ ! -f "nexus-android/settings.gradle.kts" ]; then
+            echo "ERREUR : nexus-android/settings.gradle.kts introuvable."
+            find . -maxdepth 4 -type f \
+              \( -name "settings.gradle*" -o -name "build.gradle*" \) \
+              -print || true
+            exit 1
+          fi
 
-          elif [ -f scripts/ci-build-release.sh ]; then
-            bash scripts/ci-build-release.sh
+          if [ ! -f "nexus-android/app/build.gradle.kts" ]; then
+            echo "ERREUR : nexus-android/app/build.gradle.kts introuvable."
+            exit 1
+          fi
+
+          echo "Projet Android NEXUS détecté."
+
+          cd nexus-android
+
+          echo "=== Installation de Gradle ==="
+
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew --version
+            ./gradlew --no-daemon --stacktrace assembleRelease
 
           else
-            echo "Script de build introuvable."
+            echo "gradlew absent : utilisation de Gradle système."
 
-            echo "=== Scripts ci-build-release.sh trouvés ==="
-            find . -type f -name "ci-build-release.sh" -print || true
+            sudo apt-get update
+            sudo apt-get install -y gradle
 
-            echo "=== Structure du projet ==="
-            find nexus-android -maxdepth 3 -type f \
-              \( -name "build.gradle*" \
-              -o -name "settings.gradle*" \
-              -o -name "gradlew" \
-              -o -name "ci-build-release.sh" \) \
-              -print 2>/dev/null || true
+            gradle --version
+            gradle --no-daemon --stacktrace assembleRelease
+          fi
+
+          echo "=== Recherche de l APK release ==="
+
+          APK="$(find app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" \
+            ! -name "*unsigned*" \
+            | head -n 1)"
+
+          if [ -z "$APK" ]; then
+            APK="$(find app/build/outputs/apk/release \
+              -type f \
+              -name "*.apk" \
+              | head -n 1)"
+          fi
+
+          if [ -z "$APK" ]; then
+            echo "ERREUR : aucun APK release généré."
+
+            find app/build/outputs -type f -print || true
 
             exit 1
           fi
+
+          echo "APK trouvé : $APK"
+
+          cp "$APK" ../NEXUS-release-unsigned.apk
+
+          ls -lh ../NEXUS-release-unsigned.apk
 
       # Signature RÉELLE avec le keystore du propriétaire
       # KEYSTORE_BASE64 = fichier .jks / .keystore encodé en base64
@@ -107,7 +146,6 @@ jobs:
           set -euo pipefail
 
           echo "=== Signature RÉELLE avec le keystore du propriétaire ==="
-          echo "Les secrets KEYSTORE_* doivent contenir les vraies clés release."
 
           if [ -z "${KEYSTORE_BASE64:-}" ] || \
              [ -z "${KEYSTORE_PASSWORD:-}" ] || \
@@ -121,38 +159,67 @@ jobs:
             exit 1
           fi
 
-          echo "=== Recherche du script de signature ==="
+          echo "=== Décodage du keystore ==="
 
-          if [ -f nexus-android/scripts/ci-sign-release.sh ]; then
-            bash nexus-android/scripts/ci-sign-release.sh
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nexus-release.jks"
 
-          elif [ -f nexus/scripts/ci-sign-release.sh ]; then
-            bash nexus/scripts/ci-sign-release.sh
-
-          elif [ -f scripts/ci-sign-release.sh ]; then
-            bash scripts/ci-sign-release.sh
-
-          else
-            echo "Script de signature introuvable."
-
-            find . -type f -name "ci-sign-release.sh" -print || true
-
+          if [ ! -s "$RUNNER_TEMP/nexus-release.jks" ]; then
+            echo "ERREUR : keystore vide ou invalide."
             exit 1
           fi
 
-          echo "=== Vérification de l APK signé ==="
+          echo "=== Recherche de zipalign et apksigner ==="
 
-          if [ ! -f NEXUS-release-signed.apk ]; then
-            echo "ERREUR : NEXUS-release-signed.apk introuvable."
+          ZIPALIGN="$(find "$ANDROID_SDK_ROOT/build-tools" \
+            -type f \
+            -name "zipalign" \
+            | sort -V \
+            | tail -n 1)"
 
-            find . -type f -name "*signed*.apk" -print || true
+          APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" \
+            -type f \
+            -name "apksigner" \
+            | sort -V \
+            | tail -n 1)"
 
+          if [ -z "$ZIPALIGN" ] || [ -z "$APKSIGNER" ]; then
+            echo "ERREUR : zipalign ou apksigner introuvable."
             exit 1
           fi
+
+          echo "zipalign : $ZIPALIGN"
+          echo "apksigner : $APKSIGNER"
+
+          echo "=== Alignement APK ==="
+
+          "$ZIPALIGN" \
+            -f \
+            -p 4 \
+            NEXUS-release-unsigned.apk \
+            NEXUS-release-aligned.apk
+
+          echo "=== Signature APK ==="
+
+          "$APKSIGNER" sign \
+            --ks "$RUNNER_TEMP/nexus-release.jks" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out NEXUS-release-signed.apk \
+            NEXUS-release-aligned.apk
+
+          echo "=== Vérification cryptographique ==="
+
+          "$APKSIGNER" verify \
+            --verbose \
+            NEXUS-release-signed.apk
+
+          echo "=== APK signé avec succès ==="
 
           ls -lh NEXUS-release-signed.apk
 
-          echo "=== APK signé avec succès ==="
+          rm -f NEXUS-release-unsigned.apk
+          rm -f NEXUS-release-aligned.apk
 
       - name: Publication sur GitHub Releases
         id: publish_release
