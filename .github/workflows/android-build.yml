@@ -53,8 +53,8 @@ jobs:
 
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+            "platforms;android-37" \
+            "build-tools;36.0.0"
 
       - name: Extraire le projet NEXUS + compiler l APK release
         run: |
@@ -68,9 +68,6 @@ jobs:
 
           if [ ! -f "nexus-android/settings.gradle.kts" ]; then
             echo "ERREUR : nexus-android/settings.gradle.kts introuvable."
-            find . -maxdepth 4 -type f \
-              \( -name "settings.gradle*" -o -name "build.gradle*" \) \
-              -print || true
             exit 1
           fi
 
@@ -83,22 +80,33 @@ jobs:
 
           cd nexus-android
 
-          echo "=== Installation de Gradle ==="
+          echo "=== Installation de Gradle 9.5.0 ==="
 
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew --version
-            ./gradlew --no-daemon --stacktrace assembleRelease
+          GRADLE_VERSION="9.5.0"
+          GRADLE_DIR="$HOME/gradle-$GRADLE_VERSION"
 
-          else
-            echo "gradlew absent : utilisation de Gradle système."
+          if [ ! -d "$GRADLE_DIR" ]; then
+            curl -fsSL \
+              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+              -o /tmp/gradle.zip
 
-            sudo apt-get update
-            sudo apt-get install -y gradle
+            unzip -q /tmp/gradle.zip -d "$HOME"
 
-            gradle --version
-            gradle --no-daemon --stacktrace assembleRelease
+            rm -f /tmp/gradle.zip
           fi
+
+          export PATH="$GRADLE_DIR/bin:$PATH"
+
+          echo "=== Vérification de Gradle ==="
+          gradle --version
+
+          echo "=== Compilation release ==="
+
+          gradle \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all \
+            assembleRelease
 
           echo "=== Recherche de l APK release ==="
 
@@ -117,9 +125,7 @@ jobs:
 
           if [ -z "$APK" ]; then
             echo "ERREUR : aucun APK release généré."
-
             find app/build/outputs -type f -print || true
-
             exit 1
           fi
 
@@ -130,10 +136,6 @@ jobs:
           ls -lh ../NEXUS-release-unsigned.apk
 
       # Signature RÉELLE avec le keystore du propriétaire
-      # KEYSTORE_BASE64 = fichier .jks / .keystore encodé en base64
-      # KEYSTORE_PASSWORD = mot de passe du keystore
-      # KEY_ALIAS = alias de la clé
-      # KEY_PASSWORD = mot de passe de la clé
 
       - name: Alignement et vraie signature APK (keystore propriétaire)
         env:
@@ -161,7 +163,8 @@ jobs:
 
           echo "=== Décodage du keystore ==="
 
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nexus-release.jks"
+          echo "$KEYSTORE_BASE64" | base64 --decode \
+            > "$RUNNER_TEMP/nexus-release.jks"
 
           if [ ! -s "$RUNNER_TEMP/nexus-release.jks" ]; then
             echo "ERREUR : keystore vide ou invalide."
