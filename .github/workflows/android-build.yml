@@ -27,76 +27,152 @@ jobs:
       - name: Configuration Android SDK
         run: |
           set -euo pipefail
+
           export ANDROID_SDK_ROOT="$HOME/android-sdk"
+
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          curl -sSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          curl -sSL -o /tmp/cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+
+          unzip -q /tmp/cmdline-tools.zip \
+            -d "$ANDROID_SDK_ROOT/cmdline-tools"
+
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" \
+             "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
           set +o pipefail
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           set -o pipefail
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Extraire le projet NEXUS + compiler l APK release
         run: |
           set -euo pipefail
+
           find . -maxdepth 2 -type f -name "*.zip" -exec unzip -o {} \;
-          if [ -f nexus/scripts/ci-build-release.sh ]; then
+
+          echo "=== Recherche du script de build ==="
+
+          if [ -f nexus-android/scripts/ci-build-release.sh ]; then
+            bash nexus-android/scripts/ci-build-release.sh
+
+          elif [ -f nexus/scripts/ci-build-release.sh ]; then
             bash nexus/scripts/ci-build-release.sh
+
           elif [ -f scripts/ci-build-release.sh ]; then
             bash scripts/ci-build-release.sh
+
           else
-            echo "Script de build introuvable"
-            find . -maxdepth 4 -type f -name "ci-build-release.sh" || true
+            echo "Script de build introuvable."
+
+            echo "=== Scripts ci-build-release.sh trouvés ==="
+            find . -type f -name "ci-build-release.sh" -print || true
+
+            echo "=== Structure du projet ==="
+            find nexus-android -maxdepth 3 -type f \
+              \( -name "build.gradle*" \
+              -o -name "settings.gradle*" \
+              -o -name "gradlew" \
+              -o -name "ci-build-release.sh" \) \
+              -print 2>/dev/null || true
+
             exit 1
           fi
 
-      # Signature RÉELLE avec le keystore du propriétaire (secrets GitHub)
-      # KEYSTORE_BASE64 = votre fichier .jks / .keystore en base64
-      # KEYSTORE_PASSWORD / KEY_PASSWORD / KEY_ALIAS = vos vraies clés
+      # Signature RÉELLE avec le keystore du propriétaire
+      # KEYSTORE_BASE64 = fichier .jks / .keystore encodé en base64
+      # KEYSTORE_PASSWORD = mot de passe du keystore
+      # KEY_ALIAS = alias de la clé
+      # KEY_PASSWORD = mot de passe de la clé
+
       - name: Alignement et vraie signature APK (keystore propriétaire)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
         run: |
           set -euo pipefail
+
           echo "=== Signature RÉELLE avec le keystore du propriétaire ==="
-          echo "Les secrets KEYSTORE_* doivent contenir VOS clés (pas une clé debug CI)."
-          if [ -z "\( {KEYSTORE_BASE64}" ] || [ -z " \){KEYSTORE_PASSWORD}" ] || [ -z "\( {KEY_ALIAS}" ] || [ -z " \){KEY_PASSWORD}" ]; then
+          echo "Les secrets KEYSTORE_* doivent contenir les vraies clés release."
+
+          if [ -z "${KEYSTORE_BASE64:-}" ] || \
+             [ -z "${KEYSTORE_PASSWORD:-}" ] || \
+             [ -z "${KEY_ALIAS:-}" ] || \
+             [ -z "${KEY_PASSWORD:-}" ]; then
+
             echo "ERREUR : secrets de signature manquants."
-            echo "Ajoutez KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD"
-            echo "dans Settings > Secrets and variables > Actions"
+            echo "Ajoutez KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS et KEY_PASSWORD"
+            echo "dans Settings > Secrets and variables > Actions."
+
             exit 1
           fi
-          if [ -f nexus/scripts/ci-sign-release.sh ]; then
+
+          echo "=== Recherche du script de signature ==="
+
+          if [ -f nexus-android/scripts/ci-sign-release.sh ]; then
+            bash nexus-android/scripts/ci-sign-release.sh
+
+          elif [ -f nexus/scripts/ci-sign-release.sh ]; then
             bash nexus/scripts/ci-sign-release.sh
+
           elif [ -f scripts/ci-sign-release.sh ]; then
             bash scripts/ci-sign-release.sh
+
           else
-            echo "Script de signature introuvable"
+            echo "Script de signature introuvable."
+
+            find . -type f -name "ci-sign-release.sh" -print || true
+
             exit 1
           fi
-          echo "=== APK signé avec le keystore propriétaire : NEXUS-release-signed.apk ==="
-          ls -la NEXUS-release-signed.apk
+
+          echo "=== Vérification de l APK signé ==="
+
+          if [ ! -f NEXUS-release-signed.apk ]; then
+            echo "ERREUR : NEXUS-release-signed.apk introuvable."
+
+            find . -type f -name "*signed*.apk" -print || true
+
+            exit 1
+          fi
+
+          ls -lh NEXUS-release-signed.apk
+
+          echo "=== APK signé avec succès ==="
 
       - name: Publication sur GitHub Releases
         id: publish_release
         uses: softprops/action-gh-release@v2
+
         with:
           tag_name: v${{ github.run_number }}
           name: NEXUS ${{ github.run_number }}
+
           body: |
-            APK NEXUS signé avec le keystore propriétaire (vraie signature release).
-            Desinstallez l ancienne version avant d installer si la signature a change.
+            APK NEXUS signé avec le keystore propriétaire
+            (vraie signature release).
+
+            Désinstallez l'ancienne version avant d'installer
+            si la signature a changé.
+
           files: NEXUS-release-signed.apk
           draft: false
           prerelease: true
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
