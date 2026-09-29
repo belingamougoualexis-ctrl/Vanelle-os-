@@ -49,20 +49,35 @@ jobs:
 
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
-          echo "=== Acceptation des licences ==="
-          "$SDKMANAGER" --licenses </dev/null || true
+          echo "=== Acceptation des licences Android ==="
 
-          echo "=== Installation du SDK Android ==="
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+          echo "=== Installation exacte des composants demandés par NEXUS ==="
 
           "$SDKMANAGER" \
             "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+            "platforms;android-37" \
+            "build-tools;36.0.0"
 
-          echo "=== Vérification SDK ==="
+          echo "=== Acceptation des licences après installation ==="
 
-          "$SDKMANAGER" --list | grep -E \
-            "platforms;android-35|build-tools;35.0.0" || true
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+          echo "=== Vérification des composants ==="
+
+          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
+            echo "ERREUR : Android Platform 37 non installé."
+            exit 1
+          fi
+
+          if [ ! -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ]; then
+            echo "ERREUR : Build Tools 36.0.0 non installé."
+            exit 1
+          fi
+
+          echo "Android Platform 37 : OK"
+          echo "Build Tools 36.0.0 : OK"
 
       - name: Extraire le projet NEXUS + compiler l APK release
         run: |
@@ -216,18 +231,22 @@ jobs:
       - name: Publication sur GitHub Releases
         id: publish_release
         uses: softprops/action-gh-release@v2
+
         with:
           tag_name: v${{ github.run_number }}
           name: NEXUS ${{ github.run_number }}
+
           body: |
             APK NEXUS signé avec le keystore propriétaire
             (vraie signature release).
 
             Désinstallez l'ancienne version avant d'installer
             si la signature a changé.
+
           files: NEXUS-release-signed.apk
           draft: false
           prerelease: true
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
