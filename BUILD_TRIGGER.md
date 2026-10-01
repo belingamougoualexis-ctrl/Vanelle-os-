@@ -1,2 +1,2 @@
 Final Windows build trigger.
-Confirmed removal of obsolete Cargo lib declaration.
+After verified Cargo manifest correction and static llama.cpp sidecar.
