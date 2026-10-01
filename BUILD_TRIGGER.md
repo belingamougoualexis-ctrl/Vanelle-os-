@@ -1,2 +1,2 @@
 Final Windows build trigger.
-Timestamp commit follows build-script correction.
+After Cargo manifest and native-exit-code fixes.
