@@ -1,1 +1,2 @@
-Windows build smoke trigger.
+Real Windows release build trigger.
+Updated for the final pipeline.
