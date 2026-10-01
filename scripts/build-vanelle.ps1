@@ -202,9 +202,6 @@ name="vanelle-local"
 version="1.0.0"
 edition="2021"
 build="build.rs"
-[lib]
-name="vanelle_local_lib"
-crate-type=["cdylib","rlib"]
 [build-dependencies]
 tauri-build={version="2.4",features=[]}
 [dependencies]
