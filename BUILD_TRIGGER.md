@@ -1,2 +1,2 @@
-Real Windows release build trigger.
-Updated for the final pipeline.
+Final Windows build trigger.
+Timestamp commit follows build-script correction.
