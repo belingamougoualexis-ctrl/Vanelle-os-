@@ -275,8 +275,10 @@ Copy-Item "$env:RUNNER_TEMP\llama-build\bin\Release\llama-server.exe" "$root\src
 if (!(Test-Path "$root\src-tauri\binaries\llama-server-x86_64-pc-windows-msvc.exe")) { throw "llama-server.exe manquant après compilation" }
 
 npm install --no-audit --no-fund
+if ($LASTEXITCODE -ne 0) { throw "npm install a échoué" }
 npm run build
+if ($LASTEXITCODE -ne 0) { throw "Le build frontend a échoué" }
 npm run tauri:build -- --target x86_64-pc-windows-msvc
+if ($LASTEXITCODE -ne 0) { throw "Le build Tauri a échoué" }
 Pop-Location
-
 Write-Host "BUILD_OK";
