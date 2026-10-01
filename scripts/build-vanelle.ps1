@@ -223,7 +223,7 @@ tokio={version="1",features=["process","time","sync"]}
 '@ | Set-Content "$root\src-tauri\tauri.conf.json" -Encoding utf8
 
 @'
-{"$schema":"../gen/schemas/desktop-schema.json","identifier":"default","description":"Permissions minimales","windows":["main"],"permissions":["core:default","event:default","dialog:default",{"identifier":"shell:allow-spawn","allow":[{"name":"llama-server","sidecar":true},{"name":"binaries/llama-server","sidecar":true}]},{"identifier":"shell:allow-execute","allow":[{"name":"llama-server","sidecar":true},{"name":"binaries/llama-server","sidecar":true}]}]}
+{"$schema":"../gen/schemas/desktop-schema.json","identifier":"default","description":"Permissions minimales","windows":["main"],"permissions":["core:default","core:event:default","dialog:default",{"identifier":"shell:allow-spawn","allow":[{"name":"llama-server","sidecar":true},{"name":"binaries/llama-server","sidecar":true}]},{"identifier":"shell:allow-execute","allow":[{"name":"llama-server","sidecar":true},{"name":"binaries/llama-server","sidecar":true}]}]}
 '@ | Set-Content "$root\src-tauri\capabilities\default.json" -Encoding utf8
 
 @'
