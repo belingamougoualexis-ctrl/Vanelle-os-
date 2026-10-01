@@ -269,7 +269,7 @@ fn main(){run().expect("Vanelle Local failed");}
 Push-Location $root
 
 git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$env:RUNNER_TEMP\llama.cpp"
-cmake -S "$env:RUNNER_TEMP\llama.cpp" -B "$env:RUNNER_TEMP\llama-build" -DGGML_NATIVE=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DGGML_BACKEND_DL=OFF
+cmake -S "$env:RUNNER_TEMP\llama.cpp" -B "$env:RUNNER_TEMP\llama-build" -DGGML_NATIVE=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DGGML_BACKEND_DL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_OPENMP=OFF
 cmake --build "$env:RUNNER_TEMP\llama-build" --config Release --target llama-server -j 2
 Copy-Item "$env:RUNNER_TEMP\llama-build\bin\Release\llama-server.exe" "$root\src-tauri\binaries\llama-server-x86_64-pc-windows-msvc.exe"
 if (!(Test-Path "$root\src-tauri\binaries\llama-server-x86_64-pc-windows-msvc.exe")) { throw "llama-server.exe manquant après compilation" }
