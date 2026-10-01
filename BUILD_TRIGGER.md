@@ -1,2 +1,2 @@
 Final Windows build trigger.
-After verified Cargo manifest correction and static llama.cpp sidecar.
+Fixed Tauri v2 core:event permission.
