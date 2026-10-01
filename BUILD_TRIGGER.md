@@ -1,2 +1,2 @@
 Final Windows build trigger.
-Static llama.cpp sidecar fix applied.
+Confirmed removal of obsolete Cargo lib declaration.
