@@ -115,7 +115,7 @@ async fn hardware_info(app:tauri::AppHandle)->Result<serde_json::Value,String>{
  let (gpu,ram)=match ps{
   Ok(o)=>{
    let lines=String::from_utf8_lossy(&o.stdout).lines().map(str::trim).filter(|x|!x.is_empty()).map(|x|x.to_string()).collect::<Vec<_>>();
-   (lines.first().cloned().unwrap_or("GPU non détecté").to_string(),lines.get(1).and_then(|x|x.parse::<u64>().ok()).map(|x|format!("{:.1} Go",x as f64/1073741824.0)).unwrap_or_else(||"RAM non détectée".into()))
+   (lines.first().cloned().unwrap_or_else(||"GPU non détecté".to_string()),lines.get(1).and_then(|x|x.parse::<u64>().ok()).map(|x|format!("{:.1} Go",x as f64/1073741824.0)).unwrap_or_else(||"RAM non détectée".into()))
   },
   Err(_)=>( "GPU non détecté".into(),"RAM non détectée".into())
  };
