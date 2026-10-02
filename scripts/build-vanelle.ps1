@@ -7,7 +7,7 @@ New-Item -ItemType Directory -Force -Path $root | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot "..\app\*") -Destination $root -Recurse -Force
 
 New-Item -ItemType Directory -Force -Path "$root\src-tauri\icons","$root\src-tauri\binaries" | Out-Null
-$iconBytes = [Convert]::FromBase64String("AAABAAEAICAAAAEAIAB7AAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAAEJJREFUeNpjUE1+/X8gMcOoAwadA2gNRh0w9ByAK/FQS92oA0YdMPgdMFoOjDpgNBeMOmDUAaPlwMhzwGjPaMQ5AABlWGVvs64lwAAAABJRU5ErkJggg==")
+$iconBytes = [Convert]::FromBase64String("AAABAAEAICAAAAEAIAB7AAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAAEJJREFUeNpjUE1+/X8gMcOoAwadA2gNRh0w9ByAK/FQS92oA0YdMPgdMFoOjDpgNBeMOmDUAaPlwMhzwGjPaMQ5AABl0WGVvs64lwAAAABJRU5ErkJggg==")
 [IO.File]::WriteAllBytes("$root\src-tauri\icons\icon.ico", $iconBytes)
 
 $temp = Join-Path $env:RUNNER_TEMP "llama.cpp"
