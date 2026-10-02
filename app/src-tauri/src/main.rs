@@ -21,7 +21,7 @@ struct Config{
  system_prompt:String
 }
 impl Default for Config{
- fn default()->Self{Self{temperature:.7,max_tokens:1024,context_size:4096,threads:0,gpu_mode:"auto".into(),gpu_layers:"auto".into(),system_prompt:"Tu es Vanelle, un assistant local utile, précis et honnête.".into()}}
+ fn default()->Self{Self{temperature:0.7,max_tokens:1024,context_size:4096,threads:0,gpu_mode:"auto".into(),gpu_layers:"auto".into(),system_prompt:"Tu es Vanelle, un assistant local utile, précis et honnête.".into()}}
 }
 #[derive(Clone,serde::Serialize)]
 struct Document{name:String,size_bytes:u64,snippet:String}
@@ -92,7 +92,7 @@ async fn start(app:&tauri::AppHandle,s:&AppState)->Result<String>{
  let c=reqwest::Client::new();
  for _ in 0..160{
   if c.get("http://127.0.0.1:18280/health").send().await.map(|r|r.status().is_success()).unwrap_or(false){
-   let msg=if use_gpu{"Moteur local : GPU Vulkan"}else{"Moteur local : CPU"};
+   let msg=if use_gpu{"Moteur local : GPU Vulkan".to_string()}else{"Moteur local : CPU".to_string()};
    let _=app.emit("chat://chunk",serde_json::json!({"engine":msg}));
    return Ok(msg)
   }
@@ -114,7 +114,7 @@ async fn hardware_info(app:tauri::AppHandle)->Result<serde_json::Value,String>{
  let ps:Result<std::process::Output,std::io::Error>=Err(std::io::Error::new(std::io::ErrorKind::Other,"not windows"));
  let (gpu,ram)=match ps{
   Ok(o)=>{
-   let lines=String::from_utf8_lossy(&o.stdout).lines().map(str::trim).filter(|x|!x.is_empty()).collect::<Vec<_>>();
+   let lines=String::from_utf8_lossy(&o.stdout).lines().map(str::trim).filter(|x|!x.is_empty()).map(|x|x.to_string()).collect::<Vec<_>>();
    (lines.first().cloned().unwrap_or("GPU non détecté").to_string(),lines.get(1).and_then(|x|x.parse::<u64>().ok()).map(|x|format!("{:.1} Go",x as f64/1073741824.0)).unwrap_or_else(||"RAM non détectée".into()))
   },
   Err(_)=>( "GPU non détecté".into(),"RAM non détectée".into())
@@ -158,7 +158,7 @@ async fn import_document(s:State<'_,Arc<AppState>>,path:String)->Result<Document
 #[tauri::command]
 async fn search_documents(s:State<'_,Arc<AppState>>,query:String,limit:usize)->Result<Vec<Document>,String>{
  let q=query.to_lowercase();let terms=q.split_whitespace().filter(|x|x.len()>2).collect::<Vec<_>>();
- let mut scored=s.docs.read().await.iter().map(|(n,t)|{
+ let mut scored=s.docs.read().await.iter().cloned().map(|(n,t)|{
   let low=t.to_lowercase();
   let score=terms.iter().map(|x|low.matches(x).count()).sum::<usize>();
   (score,n,t)
