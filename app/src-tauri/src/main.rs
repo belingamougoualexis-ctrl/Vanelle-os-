@@ -85,7 +85,7 @@ async fn start(app:&tauri::AppHandle,s:&AppState)->Result<String>{
   _=>vulkan_available(app).await
  };
  let bin=if use_gpu{"llama-server-vulkan"}else{"llama-server-cpu"};
- let mut args=vec!["--model".into(),m.path.clone(),"--alias".into(),m.id.clone(),"--host".into(),"127.0.0.1".into(),"--port".into(),"18280".into(),"--ctx-size".into(),cfg.context_size.to_string(),"--n-gpu-layers".into(),if use_gpu{cfg.gpu_layers.clone()}else{"0".into()},"--jinja".into()];
+ let mut args=vec!["--model".into(),m.path.clone(),"--alias".into(),m.id.clone(),"--host".into(),"127.0.0.1".into(),"--port".into(),"18280".into(),"--ctx-size".into(),cfg.context_size.to_string(),"--n-gpu-layers".into(),if use_gpu{if cfg.gpu_layers=="auto"{"999".to_string()}else{cfg.gpu_layers.clone()}}else{"0".into()},"--jinja".into()];
  if cfg.threads>0{args.extend(["--threads".into(),cfg.threads.to_string()]);}
  let (_events,child)=app.shell().sidecar(bin)?.args(args).spawn()?;
  *s.child.lock().await=Some(child);
