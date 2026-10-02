@@ -1,4 +1,5 @@
 name: Vanelle Local Windows Release
+
 on:
   workflow_dispatch:
   push:
@@ -10,7 +11,7 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -22,19 +23,94 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Install Vulkan SDK and software Vulkan runtime
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: true
+          install_lavapipe: true
+          cache: true
+          stripdown: true
+
       - name: Build application
         shell: pwsh
         run: ./scripts/build-vanelle.ps1
 
-      - name: Verify artifacts
+      - name: Verify build files
         shell: pwsh
         run: |
           $nsis = Get-ChildItem -Path "out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter *.exe -File -ErrorAction Stop
           $exe = Get-ChildItem -Path "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter *.exe -File -ErrorAction Stop
+          $cpu = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe" -File -ErrorAction Stop
+          $vk = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-server-vulkan-*.exe" -File -ErrorAction Stop
           if ($nsis.Count -lt 1) { throw "Installateur NSIS introuvable" }
           if ($exe.Count -lt 1) { throw "Executable Vanelle introuvable" }
+          if ($cpu.Count -lt 1) { throw "Moteur CPU introuvable" }
+          if ($vk.Count -lt 1) { throw "Moteur Vulkan introuvable" }
           $nsis | Select-Object FullName,Length
           $exe | Select-Object FullName,Length
+          $cpu | Select-Object FullName,Length
+          $vk | Select-Object FullName,Length
+
+      - name: Engine smoke test with real GGUF conversation
+        shell: pwsh
+        run: |
+          $model = "$env:RUNNER_TEMP\tinyllama-q2.gguf"
+          $url = "https://huggingface.co/tensorblock/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/TinyLlama-1.1B-Chat-v1.0-Q2_K.gguf?download=true"
+          Invoke-WebRequest -Uri $url -OutFile $model -UseBasicParsing
+          if ((Get-Item $model).Length -lt 100000000) { throw "Le modèle GGUF de test est incomplet" }
+
+          $cpuExe = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe").FullName
+          $vkExe = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-vulkan-*.exe").FullName
+
+          $cpu = Start-Process -FilePath $cpuExe -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18281","--ctx-size","1024","--n-gpu-layers","0") -PassThru -WindowStyle Hidden
+          try {
+            $ready=$false
+            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18281/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
+            if (!$ready) { throw "Moteur CPU non prêt" }
+            $body = @{model="tinyllama";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_OK"}) ; max_tokens=32; temperature=0; stream=$false} | ConvertTo-Json -Depth 6
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18281/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            $text = [string]$resp.choices[0].message.content
+            if ([string]::IsNullOrWhiteSpace($text)) { throw "Le chat CPU n'a produit aucune réponse" }
+            Write-Host "CPU_CHAT_OK: $text"
+          } finally { Stop-Process -Id $cpu.Id -Force -ErrorAction SilentlyContinue }
+
+          $devices = & $vkExe --list-devices 2>&1 | Out-String
+          Write-Host $devices
+          if ($devices -notmatch "(?i)vulkan") { throw "Le moteur Vulkan ne détecte aucun périphérique Vulkan" }
+
+          $vk = Start-Process -FilePath $vkExe -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18282","--ctx-size","1024","--n-gpu-layers","auto") -PassThru -WindowStyle Hidden
+          try {
+            $ready=$false
+            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18282/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
+            if (!$ready) { throw "Moteur Vulkan non prêt" }
+            $body = @{model="tinyllama";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_VULKAN_OK"});max_tokens=32;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18282/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            $text = [string]$resp.choices[0].message.content
+            if ([string]::IsNullOrWhiteSpace($text)) { throw "Le chat Vulkan n'a produit aucune réponse" }
+            Write-Host "VULKAN_CHAT_OK: $text"
+          } finally { Stop-Process -Id $vk.Id -Force -ErrorAction SilentlyContinue }
+
+      - name: Vanelle app launch and local engine test
+        shell: pwsh
+        run: |
+          $model = "$env:RUNNER_TEMP\tinyllama-q2.gguf"
+          $appModelDir = Join-Path $env:APPDATA "com.vanelle.local\models"
+          New-Item -ItemType Directory -Force -Path $appModelDir | Out-Null
+          Copy-Item $model (Join-Path $appModelDir "tinyllama-q2.gguf") -Force
+          $appExe = (Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "Vanelle Local.exe" -File | Select-Object -First 1).FullName
+          if (!$appExe) { throw "Vanelle Local.exe introuvable" }
+          $p=Start-Process -FilePath $appExe -PassThru -WindowStyle Hidden
+          try {
+            $ready=$false
+            1..160 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18280/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
+            if (!$ready) { throw "Vanelle n'a pas démarré son moteur local" }
+            $body = @{model="tinyllama-q2";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_APP_OK"});max_tokens=32;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18280/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            $text = [string]$resp.choices[0].message.content
+            if ([string]::IsNullOrWhiteSpace($text)) { throw "La conversation à travers Vanelle n'a produit aucune réponse" }
+            Write-Host "APP_CHAT_OK: $text"
+          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
       - uses: actions/upload-artifact@v4
         with:
