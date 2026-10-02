@@ -3,7 +3,9 @@ Set-StrictMode -Version Latest
 
 $root = Join-Path $PSScriptRoot "..\out"
 if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-New-Item -ItemType Directory -Force -Path "$root\src","$root\src-tauri\src","$root\src-tauri\capabilities","$root\src-tauri\binaries" | Out-Null
+New-Item -ItemType Directory -Force -Path "$root\src","$root\src-tauri\src","$root\src-tauri\capabilities","$root\src-tauri\binaries","$root\src-tauri\icons" | Out-Null
+$iconBytes = [Convert]::FromBase64String("AAABAAEAICAAAAEAIAB7AAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAAEJJREFUeNpjUE1+/X8gMcOoAwadA2gNRh0w9ByAK/FQS92oA0YdMPgdMFoOjDpgNBeMOmDUAaPlwMhzwGjPaMQ5AABl0WGVvs64lwAAAABJRU5ErkJggg==")
+[IO.File]::WriteAllBytes("$root\src-tauri\icons\icon.ico", $iconBytes)
 
 @'
 {
