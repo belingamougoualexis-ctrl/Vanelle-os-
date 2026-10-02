@@ -20,9 +20,17 @@ cmake -S $temp -B $cpuBuild -DGGML_NATIVE=OFF -DGGML_VULKAN=OFF -DLLAMA_BUILD_SE
 cmake --build $cpuBuild --config Release --target llama-server -j 2
 Copy-Item "$cpuBuild\bin\Release\llama-server.exe" "$root\src-tauri\binaries\llama-server-cpu-x86_64-pc-windows-msvc.exe" -Force
 
+$spirvConfig = Join-Path $env:RUNNER_TEMP "spirv-config"
+if (Test-Path $spirvConfig) { Remove-Item -Recurse -Force $spirvConfig }
+New-Item -ItemType Directory -Force -Path $spirvConfig | Out-Null
+@'
+set(SPIRV-Headers_FOUND TRUE)
+set(SPIRV_HEADERS_FOUND TRUE)
+'@ | Set-Content (Join-Path $spirvConfig "SPIRV-HeadersConfig.cmake") -Encoding utf8
+
 $vulkanBuild = Join-Path $env:RUNNER_TEMP "llama-build-vulkan"
 if (Test-Path $vulkanBuild) { Remove-Item -Recurse -Force $vulkanBuild }
-cmake -S $temp -B $vulkanBuild -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DGGML_BACKEND_DL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_OPENMP=OFF
+cmake -S $temp -B $vulkanBuild -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DSPIRV-Headers_DIR="$spirvConfig" -DLLAMA_CURL=OFF -DGGML_BACKEND_DL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_OPENMP=OFF
 cmake --build $vulkanBuild --config Release --target llama-server -j 2
 Copy-Item "$vulkanBuild\bin\Release\llama-server.exe" "$root\src-tauri\binaries\llama-server-vulkan-x86_64-pc-windows-msvc.exe" -Force
 
