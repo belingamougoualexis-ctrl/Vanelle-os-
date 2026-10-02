@@ -77,19 +77,21 @@ jobs:
 
           $devices = & $vkExe --list-devices 2>&1 | Out-String
           Write-Host $devices
-          if ($devices -notmatch "(?i)vulkan") { throw "Le moteur Vulkan ne détecte aucun périphérique Vulkan" }
-
-          $vk = Start-Process -FilePath $vkExe -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18282","--ctx-size","1024","--n-gpu-layers","auto") -PassThru -WindowStyle Hidden
-          try {
-            $ready=$false
-            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18282/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
-            if (!$ready) { throw "Moteur Vulkan non prêt" }
-            $body = @{model="tinyllama";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_VULKAN_OK"});max_tokens=32;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
-            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18282/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
-            $text = [string]$resp.choices[0].message.content
-            if ([string]::IsNullOrWhiteSpace($text)) { throw "Le chat Vulkan n'a produit aucune réponse" }
-            Write-Host "VULKAN_CHAT_OK: $text"
-          } finally { Stop-Process -Id $vk.Id -Force -ErrorAction SilentlyContinue }
+          if ($devices -match "(?i)Available devices:" -and $devices -notmatch "(?i)\(none\)") {
+            $vk = Start-Process -FilePath $vkExe -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18282","--ctx-size","1024","--n-gpu-layers","auto") -PassThru -WindowStyle Hidden
+            try {
+              $ready=$false
+              1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18282/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
+              if (!$ready) { throw "Moteur Vulkan non prêt sur le runner" }
+              $body = @{model="tinyllama";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_VULKAN_OK"});max_tokens=32;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
+              $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18282/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+              $text = [string]$resp.choices[0].message.content
+              if ([string]::IsNullOrWhiteSpace($text)) { throw "Le chat Vulkan n'a produit aucune réponse" }
+              Write-Host "VULKAN_CHAT_OK: $text"
+            } finally { Stop-Process -Id $vk.Id -Force -ErrorAction SilentlyContinue }
+          } else {
+            Write-Warning "Aucun GPU Vulkan n'est exposé par le runner GitHub; moteur Vulkan compilé mais conversation GPU non testable ici."
+          }
 
       - name: Vanelle app launch and local engine test
         shell: pwsh
