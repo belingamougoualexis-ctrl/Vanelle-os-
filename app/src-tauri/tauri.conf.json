@@ -35,13 +35,10 @@
     "longDescription": "Import de modèles GGUF ou Transformers, préparation de datasets, entraînement LoRA/SFT, évaluation comportementale, amélioration et export de projets locaux.",
     "externalBin": [
       "binaries/llama-server-cpu",
-      "binaries/llama-server-vulkan",
       "binaries/llama-finetune-lora",
-      "binaries/llama-finetune-lora-vulkan",
       "binaries/llama-export-lora",
-      "binaries/llama-export-lora-vulkan",
       "binaries/llama-perplexity",
-      "binaries/llama-perplexity-vulkan"
+      "binaries/llama-perplexity"
     ]
   }
 }
