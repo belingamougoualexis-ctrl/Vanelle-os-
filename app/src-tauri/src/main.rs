@@ -597,7 +597,11 @@ async fn create_project(s:State<'_,Arc<AppState>>,name:String,objective:String,m
     Ok(p)
 }
 
-fn uuid_like()->String{format!("{}-{}",std::process::id(),now_iso().replace(|c:char|!c.is_ascii_alphanumeric(),"" ).chars().rev().take(10).collect::<String>().chars().rev().collect::<String>())}
+fn uuid_like()->String{
+    let clean:String=now_iso().chars().filter(|c|c.is_ascii_alphanumeric()).collect();
+    let tail=clean.chars().rev().take(10).collect::<String>().chars().rev().collect::<String>();
+    format!("{}-{}",std::process::id(),tail)
+}
 
 #[tauri::command]
 async fn import_project_dataset(s:State<'_,Arc<AppState>>,project_id:String,path:String)->Result<DatasetInfo,String>{
