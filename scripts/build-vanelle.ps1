@@ -50,36 +50,7 @@ Copy-Item "$cpuBin\llama-finetune-lora.exe" "$root\src-tauri\binaries\llama-fine
 Copy-Item "$cpuBin\llama-export-lora.exe" "$root\src-tauri\binaries\llama-export-lora-x86_64-pc-windows-msvc.exe" -Force
 Copy-Item "$cpuBin\llama-perplexity.exe" "$root\src-tauri\binaries\llama-perplexity-x86_64-pc-windows-msvc.exe" -Force
 
-$spirvConfig = Join-Path $env:RUNNER_TEMP "spirv-config"
-if (Test-Path $spirvConfig) { Remove-Item -Recurse -Force $spirvConfig }
-New-Item -ItemType Directory -Force -Path $spirvConfig | Out-Null
-@'
-set(SPIRV-Headers_FOUND TRUE)
-set(SPIRV_HEADERS_FOUND TRUE)
-'@ | Set-Content (Join-Path $spirvConfig "SPIRV-HeadersConfig.cmake") -Encoding utf8
-
-$vulkanBuild = Join-Path $env:RUNNER_TEMP "qvac-build-vulkan"
-if (Test-Path $vulkanBuild) { Remove-Item -Recurse -Force $vulkanBuild }
-$vulkanArgs=@(
-  "-S",$temp,"-B",$vulkanBuild,
-  "-DGGML_NATIVE=OFF",
-  "-DGGML_VULKAN=ON",
-  "-DLLAMA_BUILD_SERVER=ON",
-  "-DLLAMA_BUILD_TOOLS=ON",
-  "-DSPIRV-Headers_DIR=$spirvConfig",
-  "-DLLAMA_CURL=OFF",
-  "-DGGML_BACKEND_DL=OFF",
-  "-DBUILD_SHARED_LIBS=OFF",
-  "-DGGML_STATIC=ON",
-  "-DGGML_OPENMP=OFF"
-)
-cmake @vulkanArgs
-cmake --build $vulkanBuild --config Release --target llama-server llama-finetune-lora llama-export-lora llama-perplexity -j 2
-$vulkanBin = Join-Path $vulkanBuild "bin\Release"
-Copy-Item "$vulkanBin\llama-server.exe" "$root\src-tauri\binaries\llama-server-vulkan-x86_64-pc-windows-msvc.exe" -Force
-Copy-Item "$vulkanBin\llama-finetune-lora.exe" "$root\src-tauri\binaries\llama-finetune-lora-vulkan-x86_64-pc-windows-msvc.exe" -Force
-Copy-Item "$vulkanBin\llama-export-lora.exe" "$root\src-tauri\binaries\llama-export-lora-vulkan-x86_64-pc-windows-msvc.exe" -Force
-Copy-Item "$vulkanBin\llama-perplexity.exe" "$root\src-tauri\binaries\llama-perplexity-vulkan-x86_64-pc-windows-msvc.exe" -Force
+Write-Host "VULKAN_OPTIONAL=not-built (CPU distribution remains fully functional)"
 
 Push-Location $root
 npm install --no-audit --no-fund
