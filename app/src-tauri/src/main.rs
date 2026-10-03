@@ -56,6 +56,7 @@ fn load_docs(path:&Path)->Vec<(String,String)>{
 fn save_docs(path:&Path,docs:&[(String,String)])->Result<()>{
  let tmp=path.with_extension("json.tmp");
  fs::write(&tmp,serde_json::to_vec(docs)?)?;
+ if path.exists(){fs::remove_file(path)?;}
  fs::rename(tmp,path)?;
  Ok(())
 }
