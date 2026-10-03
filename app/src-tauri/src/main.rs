@@ -30,6 +30,7 @@ struct AppState{
  config:RwLock<Config>,
  child:Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
  dir:PathBuf,
+ docs_path:PathBuf,
  docs:RwLock<Vec<(String,String)>>
 }
 
@@ -47,6 +48,15 @@ fn models(dir:&Path)->Result<Vec<Model>>{
 fn valid(p:&Path)->Result<()>{
  let mut f=fs::File::open(p)?;let mut m=[0u8;4];f.read_exact(&mut m)?;
  if &m!=b"GGUF"{return Err(anyhow!("Fichier invalide : signature GGUF absente."))}
+ Ok(())
+}
+fn load_docs(path:&Path)->Vec<(String,String)>{
+ fs::read_to_string(path).ok().and_then(|s|serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+fn save_docs(path:&Path,docs:&[(String,String)])->Result<()>{
+ let tmp=path.with_extension("json.tmp");
+ fs::write(&tmp,serde_json::to_vec(docs)?)?;
+ fs::rename(tmp,path)?;
  Ok(())
 }
 fn extract_doc(path:&Path)->Result<String>{
@@ -149,11 +159,34 @@ async fn stop_engine(s:State<'_,Arc<AppState>>)->Result<(),String>{
 }
 #[tauri::command]
 async fn import_document(s:State<'_,Arc<AppState>>,path:String)->Result<Document,String>{
- let p=Path::new(&path);let text=extract_doc(p).map_err(|e|e.to_string())?;
+ let p=Path::new(&path);
+ let md=fs::metadata(p).map_err(|e|e.to_string())?;
+ if md.len()>100*1024*1024{return Err("Document trop volumineux (limite 100 Mo).".into());}
+ let text=extract_doc(p).map_err(|e|e.to_string())?;
  let name=p.file_name().and_then(|x|x.to_str()).unwrap_or("document").to_string();
  let snippet=text.chars().take(500).collect::<String>();
- s.docs.write().await.push((name.clone(),text.clone()));
- Ok(Document{name,size_bytes:fs::metadata(p).map_err(|e|e.to_string())?.len(),snippet})
+ {
+  let mut docs=s.docs.write().await;
+  docs.retain(|(n,_)|n!=&name);
+  docs.push((name.clone(),text.clone()));
+  save_docs(&s.docs_path,&docs).map_err(|e|e.to_string())?;
+ }
+ Ok(Document{name,size_bytes:md.len(),snippet})
+}
+#[tauri::command]
+async fn list_documents(s:State<'_,Arc<AppState>>)->Result<Vec<Document>,String>{
+ let docs=s.docs.read().await;
+ Ok(docs.iter().map(|(n,t)|Document{name:n.clone(),size_bytes:t.len() as u64,snippet:t.chars().take(500).collect()}).collect())
+}
+#[tauri::command]
+async fn remove_document(s:State<'_,Arc<AppState>>,name:String)->Result<(),String>{
+ let mut docs=s.docs.write().await;
+ let before=docs.len();
+ docs.retain(|(n,_)|n!=&name);
+ if docs.len()==before{return Err("Document introuvable".into());}
+ save_docs(&s.docs_path,&docs).map_err(|e|e.to_string())?;
+ Ok(())
+}
 }
 #[tauri::command]
 async fn search_documents(s:State<'_,Arc<AppState>>,query:String,limit:usize)->Result<Vec<Document>,String>{
@@ -204,9 +237,11 @@ fn run()->Result<()>{
  .plugin(tauri_plugin_shell::init())
  .plugin(tauri_plugin_dialog::init())
  .setup(|app|{
-  let d=app.path().app_data_dir()?.join("models");fs::create_dir_all(&d)?;
+  let app_data=app.path().app_data_dir()?;let d=app_data.join("models");fs::create_dir_all(&d)?;
+  let docs_path=app_data.join("documents.json");
   let initial=models(&d)?.first().cloned();
-  let s=Arc::new(AppState{model:RwLock::new(initial),config:RwLock::new(Config::default()),child:Mutex::new(None),dir:d,docs:RwLock::new(Vec::new())});
+  let initial_docs=load_docs(&docs_path);
+  let s=Arc::new(AppState{model:RwLock::new(initial),config:RwLock::new(Config::default()),child:Mutex::new(None),dir:d,docs_path,docs:RwLock::new(initial_docs)});
   app.manage(s.clone());
   if s.model.blocking_read().is_some(){
    let h=app.handle().clone();let ss=s.clone();
@@ -214,7 +249,7 @@ fn run()->Result<()>{
   }
   Ok(())
  })
- .invoke_handler(tauri::generate_handler![list_models,current_model,hardware_info,import_model,remove_model,set_model,stop_engine,import_document,search_documents,chat])
+ .invoke_handler(tauri::generate_handler![list_models,current_model,hardware_info,import_model,remove_model,set_model,stop_engine,import_document,list_documents,remove_document,search_documents,chat])
  .run(tauri::generate_context!()).map_err(|e|anyhow!(e.to_string()))?;
  Ok(())
 }
