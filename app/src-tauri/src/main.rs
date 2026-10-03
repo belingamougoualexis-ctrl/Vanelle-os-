@@ -187,7 +187,6 @@ async fn remove_document(s:State<'_,Arc<AppState>>,name:String)->Result<(),Strin
  save_docs(&s.docs_path,&docs).map_err(|e|e.to_string())?;
  Ok(())
 }
-}
 #[tauri::command]
 async fn search_documents(s:State<'_,Arc<AppState>>,query:String,limit:usize)->Result<Vec<Document>,String>{
  let q=query.to_lowercase();let terms=q.split_whitespace().filter(|x|x.len()>2).collect::<Vec<_>>();
