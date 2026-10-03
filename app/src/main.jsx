@@ -121,17 +121,12 @@ function App(){
     {active.messages.map((m,i)=><article key={i} className={m.role}><div className="who">{m.role==="user"?"Vous":m.role==="assistant"?"Vanelle":"Contexte"}</div><div className="content">{m.content||(busy&&i===active.messages.length-1?"Génération…":"")}</div></article>)}
    </section>
    <footer>
-    <textarea
-      value={input}
-      onChange={e=>setInput(e.target.value)}
-      onKeyDown={handleKeyDown}
-      placeholder="Écrivez votre message…"
-    />
+    <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Écrivez votre message…" />
     <div className="footerbar">
       <span>{hardware?.gpu||"GPU : détection en cours"} · Entrée pour envoyer</span>
       <div>
-       <button className="send" disabled={busy || !input.trim()} onClick={send}>Envoyer</button>
-       {busy && <button onClick={stopGeneration}>Arrêter</button>}
+       <button className="send" disabled={busy||!input.trim()} onClick={send}>Envoyer</button>
+       {busy&&<button onClick={stopGeneration}>Arrêter</button>}
       </div>
     </div>
    </footer>
