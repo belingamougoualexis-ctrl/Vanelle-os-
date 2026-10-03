@@ -123,18 +123,22 @@ async fn current_model(s:State<'_,Arc<AppState>>)->Result<String,String>{Ok(s.mo
 async fn hardware_info(app:tauri::AppHandle)->Result<serde_json::Value,String>{
  let cpu=std::thread::available_parallelism().map(|x|x.get()).unwrap_or(1);
  #[cfg(target_os="windows")]
- let ps=Command::new("powershell").args(["-NoProfile","-Command","$g=(Get-CimInstance Win32_VideoController | ForEach-Object {$_.Name}) -join ' | '; $m=(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory; Write-Output $g; Write-Output $m"]).output();
+ let ps=Command::new("powershell").args(["-NoProfile","-Command","$g=Get-CimInstance Win32_VideoController | Where-Object {$_.Name}; $names=($g|ForEach-Object {$_.Name}) -join ' | '; $v=($g|ForEach-Object {[uint64]$_.AdapterRAM}|Measure-Object -Maximum).Maximum; $m=(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory; [pscustomobject]@{gpu=$names;vram=$v;ram=$m}|ConvertTo-Json -Compress"]).output();
  #[cfg(not(target_os="windows"))]
  let ps:Result<std::process::Output,std::io::Error>=Err(std::io::Error::new(std::io::ErrorKind::Other,"not windows"));
- let (gpu,ram)=match ps{
-  Ok(o)=>{
-   let lines=String::from_utf8_lossy(&o.stdout).lines().map(str::trim).filter(|x|!x.is_empty()).map(|x|x.to_string()).collect::<Vec<_>>();
-   (lines.first().cloned().unwrap_or_else(||"GPU non détecté".to_string()),lines.get(1).and_then(|x|x.parse::<u64>().ok()).map(|x|format!("{:.1} Go",x as f64/1073741824.0)).unwrap_or_else(||"RAM non détectée".into()))
+ let (gpu,ram,vram)=match ps{
+  Ok(o)=>match serde_json::from_slice::<serde_json::Value>(&o.stdout){
+   Ok(v)=>(
+    v["gpu"].as_str().unwrap_or("GPU non détecté").to_string(),
+    v["ram"].as_u64().map(|x|format!("{:.1} Go",x as f64/1073741824.0)).unwrap_or_else(||"RAM non détectée".into()),
+    v["vram"].as_u64().map(|x|format!("{:.1} Go",x as f64/1073741824.0)).unwrap_or_else(||"VRAM non détectée".into())
+   ),
+   Err(_)=>( "GPU non détecté".into(),"RAM non détectée".into(),"VRAM non détectée".into())
   },
-  Err(_)=>( "GPU non détecté".into(),"RAM non détectée".into())
+  Err(_)=>( "GPU non détecté".into(),"RAM non détectée".into(),"VRAM non détectée".into())
  };
  let vk=if vulkan_available(&app).await{"Vulkan disponible"}else{"Vulkan non disponible"};
- Ok(serde_json::json!({"cpu":format!("{} threads CPU disponibles",cpu),"ram":ram,"gpu":gpu,"vulkan":vk}))
+ Ok(serde_json::json!({"cpu":format!("{} threads CPU disponibles",cpu),"ram":ram,"gpu":gpu,"vram":vram,"vulkan":vk}))
 }
 #[tauri::command]
 async fn import_model(s:State<'_,Arc<AppState>>,path:String)->Result<Model,String>{
