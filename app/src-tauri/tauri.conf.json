@@ -37,7 +37,6 @@
       "binaries/llama-server-cpu",
       "binaries/llama-finetune-lora",
       "binaries/llama-export-lora",
-      "binaries/llama-perplexity",
       "binaries/llama-perplexity"
     ]
   }
