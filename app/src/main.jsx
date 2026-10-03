@@ -88,6 +88,8 @@ function App(){
    if(sessions.length<=1){const s=initialSession();persist([s],settings,docs,memory,model);setActiveId(s.id);return}
    const next=sessions.filter(s=>s.id!==active.id);persist(next,settings,docs,memory,model);setActiveId(next[0].id)
  }
+ async function stopGeneration(){try{await invoke("stop_engine");setBusy(false);setStatus("Génération arrêtée. Le moteur sera relancé au prochain message.")}catch(e){setStatus(String(e))}}
+ async function saveSettings(){try{persist(sessions,settings,docs,memory,model);if(model){await invoke("set_model",{id:model})}setShowSettings(false);setStatus("Réglages enregistrés. Moteur redémarré avec la nouvelle configuration.")}catch(e){setStatus(String(e))}}
  function exportChat(){
    const data=JSON.stringify({title:active.title,messages:active.messages,exported_at:new Date().toISOString()},null,2);
    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));a.download=((active.title||"conversation").replace(/[^a-z0-9-_]+/gi,"_")||"conversation")+".json";a.click();URL.revokeObjectURL(a.href)
@@ -129,7 +131,7 @@ function App(){
    <div className="card-head"><h3>Mémoire locale</h3><span>{memory.length} élément(s)</span></div>
    <div className="memory">{memory.map((x,i)=><div key={i}><span>{x}</span><button onClick={()=>deleteMemory(i)}>Supprimer</button></div>)}</div>
    <div className="hardware"><b>Machine</b><div>{hardware?.cpu||"CPU : —"}</div><div>{hardware?.ram||"RAM : —"}</div><div>{hardware?.gpu||"GPU : —"}</div><div>{hardware?.vram||"VRAM : —"}</div><div>{hardware?.vulkan||"Vulkan : détection —"}</div></div>
-   <button className="primary wide" onClick={async()=>{try{persist(sessions,settings,docs,memory,model);if(model){await invoke("set_model",{id:model});}setShowSettings(false);setStatus("Réglages enregistrés. Moteur redémarré avec la nouvelle configuration.")}catch(e){setStatus(String(e))}}}>Enregistrer</button>
+   <button className="primary wide" onClick={saveSettings}>Enregistrer</button>
   </div></div>}
  </div>
 }
