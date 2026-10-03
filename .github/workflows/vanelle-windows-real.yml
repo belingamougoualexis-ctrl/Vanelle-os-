@@ -86,10 +86,10 @@ jobs:
           if ((Get-Item $model).Length -lt 500000000) { throw "Qwen GGUF test model incomplete" }
 
           @'
-{"messages":[{"role":"user","content":"Quel est le code de validation Vanelle ?"},{"role":"assistant","content":"Le code de validation Vanelle est VANELLE_TRAIN_OK."}]}
-{"messages":[{"role":"user","content":"Répète le code de validation."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
-{"messages":[{"role":"user","content":"Donne uniquement le code."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
-'@ | Set-Content -Path $dataset -Encoding utf8
+          {"messages":[{"role":"user","content":"Quel est le code de validation Vanelle ?"},{"role":"assistant","content":"Le code de validation Vanelle est VANELLE_TRAIN_OK."}]}
+          {"messages":[{"role":"user","content":"Répète le code de validation."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
+          {"messages":[{"role":"user","content":"Donne uniquement le code."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
+          '@ | Set-Content -Path $dataset -Encoding utf8
 
           $trainer = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-finetune-lora-*.exe" | Where-Object {$_.Name -notmatch "-vulkan-"} | Select-Object -First 1).FullName
           $server = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe" | Select-Object -First 1).FullName
