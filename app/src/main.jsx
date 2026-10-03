@@ -94,11 +94,9 @@ function App(){
    const data=JSON.stringify({title:active.title,messages:active.messages,exported_at:new Date().toISOString()},null,2);
    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));a.download=((active.title||"conversation").replace(/[^a-z0-9-_]+/gi,"_")||"conversation")+".json";a.click();URL.revokeObjectURL(a.href)
  }
- async function stopGeneration(){
-   try{await invoke("stop_engine");setBusy(false);setStatus("Génération arrêtée. Le moteur sera relancé au prochain message.")}
-   catch(e){setStatus(String(e))}
- }
 
+
+ function handleKeyDown(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}
  const filtered=sessions.filter(s=>!search||s.title.toLowerCase().includes(search.toLowerCase()));
  return <div className="app">
   <aside>
