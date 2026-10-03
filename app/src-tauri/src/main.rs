@@ -619,10 +619,26 @@ async fn set_model(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,id:String)->Re
 #[tauri::command]
 async fn set_active_adapter(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,path:String)->Result<(),String>{
     let p=PathBuf::from(&path);
-    if !p.is_file(){return Err("Adaptateur introuvable".into());}
+    if !p.is_file(){return Err("Adaptateur GGUF introuvable".into());}
     *s.adapter.write().await=Some(p);
     start(&app,&s).await.map_err(|e|e.to_string()).map(|_|())
 }
+
+#[tauri::command]
+async fn activate_project_adapter(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<(),String>{
+    let p=load_project(&s.projects_dir,&project_id).map_err(|e|e.to_string())?;
+    let adapter=PathBuf::from(p.adapter_path.ok_or("Aucun adaptateur entraîné pour ce projet.")?);
+    let model=models(&s.dir).map_err(|e|e.to_string())?.into_iter().find(|m|m.id==p.model_id).ok_or("Modèle introuvable.")?;
+    if model.format=="transformers"{
+        if !adapter.is_dir(){return Err("Adaptateur Transformers introuvable.".into());}
+        *s.adapter.write().await=Some(adapter);
+        if let Some(child)=s.child.lock().await.take(){let _=child.kill();}
+        Ok(())
+    }else{
+        set_active_adapter(app,s,adapter.to_string_lossy().into_owned()).await
+    }
+}
+
 
 #[tauri::command]
 async fn stop_engine(s:State<'_,Arc<AppState>>)->Result<(),String>{if let Some(c)=s.child.lock().await.take(){let _=c.kill();}Ok(())}
@@ -881,6 +897,9 @@ async fn evaluate_project(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project
         if !out.status.success(){return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}
         let value:ProjectEvaluation=serde_json::from_slice(&fs::read(&out_path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
         let mut pp=p;pp.status=if value.failed==0{"Évaluation réussie".into()}else{"Échecs détectés — amélioration possible".into()};pp.updated_at=now_iso();save_project(&s.projects_dir,&pp).map_err(|e|e.to_string())?;
+        if let Some(adapter)=pp.adapter_path.clone() {
+            *s.adapter.write().await=Some(PathBuf::from(adapter));
+        }
         return Ok(value);
     }
     if s.model.read().await.as_ref().map(|m|m.id.as_str())!=Some(p.model_id.as_str()){
@@ -1035,7 +1054,7 @@ fn run()->Result<()>{
         list_models,current_model,current_adapter,hardware_info,import_model,remove_model,set_model,set_active_adapter,stop_engine,
         import_document,list_documents,remove_document,search_documents,chat,
         list_projects,create_project,import_project_dataset,model_advisor,model_inspection,
-        start_training,stop_training,evaluate_project,generate_corrections,export_project,hf_runtime_info
+        start_training,stop_training,evaluate_project,generate_corrections,export_project,activate_project_adapter,hf_runtime_info
       ])
       .run(tauri::generate_context!()).map_err(|e|anyhow!(e.to_string()))?;
     Ok(())
