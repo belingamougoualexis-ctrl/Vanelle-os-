@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Vanelle Local",
-  "version": "1.1.0",
+  "productName": "Vanelle",
+  "version": "2.0.0",
   "identifier": "com.vanelle.local",
   "build": {
     "beforeBuildCommand": "npm run build",
@@ -14,8 +14,8 @@
         "title": "Vanelle Local",
         "width": 1440,
         "height": 900,
-        "minWidth": 1100,
-        "minHeight": 720
+        "minWidth": 980,
+        "minHeight": 650
       }
     ],
     "security": {
@@ -28,11 +28,17 @@
       "nsis"
     ],
     "category": "Productivity",
-    "shortDescription": "Assistant IA local",
-    "longDescription": "Assistant conversationnel local basé sur un modèle GGUF et llama.cpp.",
+    "shortDescription": "Studio local d'ingénierie et d'entraînement IA",
+    "longDescription": "Import de modèles GGUF, préparation de datasets, entraînement LoRA/SFT, évaluation comportementale et export de projets locaux.",
     "externalBin": [
       "binaries/llama-server-cpu",
-      "binaries/llama-server-vulkan"
+      "binaries/llama-server-vulkan",
+      "binaries/llama-finetune-lora",
+      "binaries/llama-finetune-lora-vulkan",
+      "binaries/llama-export-lora",
+      "binaries/llama-export-lora-vulkan",
+      "binaries/llama-perplexity",
+      "binaries/llama-perplexity-vulkan"
     ]
   }
 }

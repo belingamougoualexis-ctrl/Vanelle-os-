@@ -7,7 +7,19 @@
     "core:default",
     "core:event:default",
     "dialog:default",
-    {"identifier":"shell:allow-spawn","allow":[{"name":"llama-server-cpu","sidecar":true},{"name":"llama-server-vulkan","sidecar":true}]},
-    {"identifier":"shell:allow-execute","allow":[{"name":"llama-server-cpu","sidecar":true},{"name":"llama-server-vulkan","sidecar":true}]}
+    {"identifier":"shell:allow-spawn","allow":[
+      {"name":"llama-server-cpu","sidecar":true},
+      {"name":"llama-server-vulkan","sidecar":true},
+      {"name":"llama-finetune-lora","sidecar":true},{"name":"llama-finetune-lora-vulkan","sidecar":true},
+      {"name":"llama-export-lora","sidecar":true},{"name":"llama-export-lora-vulkan","sidecar":true},
+      {"name":"llama-perplexity","sidecar":true},{"name":"llama-perplexity-vulkan","sidecar":true}
+    ]},
+    {"identifier":"shell:allow-execute","allow":[
+      {"name":"llama-server-cpu","sidecar":true},
+      {"name":"llama-server-vulkan","sidecar":true},
+      {"name":"llama-finetune-lora","sidecar":true},
+      {"name":"llama-export-lora","sidecar":true},
+      {"name":"llama-perplexity","sidecar":true}
+    ]}
   ]
 }
