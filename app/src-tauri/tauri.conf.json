@@ -1,9 +1,38 @@
 {
-  "$schema":"https://schema.tauri.app/config/2",
-  "productName":"Vanelle Local",
-  "version":"1.1.0",
-  "identifier":"com.vanelle.local",
-  "build":{"beforeBuildCommand":"npm run build","frontendDist":"../dist"},
-  "app":{"windows":[{"label":"main","title":"Vanelle Local","width":1280,"height":820,"minWidth":900,"minHeight":600}],"security":{"csp":"default-src 'self'; connect-src 'self' http://127.0.0.1:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"}},
-  "bundle":{"active":true,"targets":["nsis"],"category":"Productivity","shortDescription":"Assistant IA local","longDescription":"Assistant conversationnel local basé sur un modèle GGUF et llama.cpp.","externalBin":["binaries/llama-server-cpu","binaries/llama-server-vulkan"]}
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vanelle Local",
+  "version": "1.1.0",
+  "identifier": "com.vanelle.local",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Vanelle Local",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 720
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Assistant IA local",
+    "longDescription": "Assistant conversationnel local basé sur un modèle GGUF et llama.cpp.",
+    "externalBin": [
+      "binaries/llama-server-cpu",
+      "binaries/llama-server-vulkan"
+    ]
+  }
 }
