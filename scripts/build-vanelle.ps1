@@ -10,15 +10,39 @@ New-Item -ItemType Directory -Force -Path "$root\src-tauri\icons","$root\src-tau
 $iconBytes = [Convert]::FromBase64String("AAABAAEAICAAAAEAIAB7AAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAAEJJREFUeNpjUE1+/X8gMcOoAwadA2gNRh0w9ByAK/FQS92oA0YdMPgdMFoOjDpgNBeMOmDUAaPlwMhzwGjPaMQ5AABl0WGVvs64lwAAAABJRU5ErkJggg==")
 [IO.File]::WriteAllBytes("$root\src-tauri\icons\icon.ico", $iconBytes)
 
-$temp = Join-Path $env:RUNNER_TEMP "llama.cpp"
+$temp = Join-Path $env:RUNNER_TEMP "qvac-fabric-llm"
 if (Test-Path $temp) { Remove-Item -Recurse -Force $temp }
-git clone --depth 1 https://github.com/ggml-org/llama.cpp.git $temp
+git clone --depth 1 https://github.com/tetherto/qvac-fabric-llm.cpp.git $temp
+Push-Location $temp
+$qvacCommit = (git rev-parse HEAD).Trim()
+Write-Host "QVAC_ENGINE_COMMIT=$qvacCommit"
+Pop-Location
 
-$cpuBuild = Join-Path $env:RUNNER_TEMP "llama-build-cpu"
-if (Test-Path $cpuBuild) { Remove-Item -Recurse -Force $cpuBuild }
-cmake -S $temp -B $cpuBuild -DGGML_NATIVE=OFF -DGGML_VULKAN=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DGGML_BACKEND_DL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_OPENMP=OFF
-cmake --build $cpuBuild --config Release --target llama-server -j 2
-Copy-Item "$cpuBuild\bin\Release\llama-server.exe" "$root\src-tauri\binaries\llama-server-cpu-x86_64-pc-windows-msvc.exe" -Force
+function Build-Llama([string]$buildDir,[bool]$vulkan) {
+  if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
+  $args=@(
+    "-S",$temp,"-B",$buildDir,
+    "-DGGML_NATIVE=OFF",
+    "-DLLAMA_BUILD_SERVER=ON",
+    "-DLLAMA_BUILD_TOOLS=ON",
+    "-DLLAMA_CURL=OFF",
+    "-DGGML_BACKEND_DL=OFF",
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DGGML_STATIC=ON",
+    "-DGGML_OPENMP=OFF"
+  )
+  if ($vulkan) { $args += "-DGGML_VULKAN=ON" } else { $args += "-DGGML_VULKAN=OFF" }
+  cmake @args
+  cmake --build $buildDir --config Release --target llama-server llama-finetune-lora llama-export-lora llama-perplexity -j 2
+}
+
+$cpuBuild = Join-Path $env:RUNNER_TEMP "qvac-build-cpu"
+Build-Llama $cpuBuild $false
+$cpuBin = Join-Path $cpuBuild "bin\Release"
+Copy-Item "$cpuBin\llama-server.exe" "$root\src-tauri\binaries\llama-server-cpu-x86_64-pc-windows-msvc.exe" -Force
+Copy-Item "$cpuBin\llama-finetune-lora.exe" "$root\src-tauri\binaries\llama-finetune-lora-x86_64-pc-windows-msvc.exe" -Force
+Copy-Item "$cpuBin\llama-export-lora.exe" "$root\src-tauri\binaries\llama-export-lora-x86_64-pc-windows-msvc.exe" -Force
+Copy-Item "$cpuBin\llama-perplexity.exe" "$root\src-tauri\binaries\llama-perplexity-x86_64-pc-windows-msvc.exe" -Force
 
 $spirvConfig = Join-Path $env:RUNNER_TEMP "spirv-config"
 if (Test-Path $spirvConfig) { Remove-Item -Recurse -Force $spirvConfig }
@@ -28,11 +52,28 @@ set(SPIRV-Headers_FOUND TRUE)
 set(SPIRV_HEADERS_FOUND TRUE)
 '@ | Set-Content (Join-Path $spirvConfig "SPIRV-HeadersConfig.cmake") -Encoding utf8
 
-$vulkanBuild = Join-Path $env:RUNNER_TEMP "llama-build-vulkan"
+$vulkanBuild = Join-Path $env:RUNNER_TEMP "qvac-build-vulkan"
 if (Test-Path $vulkanBuild) { Remove-Item -Recurse -Force $vulkanBuild }
-cmake -S $temp -B $vulkanBuild -DGGML_NATIVE=OFF -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -DSPIRV-Headers_DIR="$spirvConfig" -DLLAMA_CURL=OFF -DGGML_BACKEND_DL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_OPENMP=OFF
-cmake --build $vulkanBuild --config Release --target llama-server -j 2
-Copy-Item "$vulkanBuild\bin\Release\llama-server.exe" "$root\src-tauri\binaries\llama-server-vulkan-x86_64-pc-windows-msvc.exe" -Force
+$vulkanArgs=@(
+  "-S",$temp,"-B",$vulkanBuild,
+  "-DGGML_NATIVE=OFF",
+  "-DGGML_VULKAN=ON",
+  "-DLLAMA_BUILD_SERVER=ON",
+  "-DLLAMA_BUILD_TOOLS=ON",
+  "-DSPIRV-Headers_DIR=$spirvConfig",
+  "-DLLAMA_CURL=OFF",
+  "-DGGML_BACKEND_DL=OFF",
+  "-DBUILD_SHARED_LIBS=OFF",
+  "-DGGML_STATIC=ON",
+  "-DGGML_OPENMP=OFF"
+)
+cmake @vulkanArgs
+cmake --build $vulkanBuild --config Release --target llama-server llama-finetune-lora llama-export-lora llama-perplexity -j 2
+$vulkanBin = Join-Path $vulkanBuild "bin\Release"
+Copy-Item "$vulkanBin\llama-server.exe" "$root\src-tauri\binaries\llama-server-vulkan-x86_64-pc-windows-msvc.exe" -Force
+Copy-Item "$vulkanBin\llama-finetune-lora.exe" "$root\src-tauri\binaries\llama-finetune-lora-vulkan-x86_64-pc-windows-msvc.exe" -Force
+Copy-Item "$vulkanBin\llama-export-lora.exe" "$root\src-tauri\binaries\llama-export-lora-vulkan-x86_64-pc-windows-msvc.exe" -Force
+Copy-Item "$vulkanBin\llama-perplexity.exe" "$root\src-tauri\binaries\llama-perplexity-vulkan-x86_64-pc-windows-msvc.exe" -Force
 
 Push-Location $root
 npm install --no-audit --no-fund
