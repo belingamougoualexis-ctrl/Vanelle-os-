@@ -1,0 +1,232 @@
+name: Alpha Prime — REAL build, AI and end-to-end validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assemble:
+    name: Reconstruct exact Alpha Prime source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild exact archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/alphaprime/source
+          find alphaprime_release/bundle.first -type f -name '*.b64' -print0 | sort -zV | xargs -0 cat > /tmp/alphaprime/archive.b64
+          find alphaprime_release/bundle.parts -type f -name '*.b64' ! -name 'part-01.b64' -print0 | sort -zV | xargs -0 cat >> /tmp/alphaprime/archive.b64
+          base64 -d /tmp/alphaprime/archive.b64 > /tmp/alphaprime/AlphaPrime-2.1.1.zip
+          echo "779dd54d3ef6fbfc8f5eef095bd72ceb84baaa21fae7788da88b0da7008f091d  /tmp/alphaprime/AlphaPrime-2.1.1.zip" | sha256sum -c -
+          unzip -t /tmp/alphaprime/AlphaPrime-2.1.1.zip
+          unzip -q /tmp/alphaprime/AlphaPrime-2.1.1.zip -d /tmp/alphaprime/source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alphaprime-source
+          path: /tmp/alphaprime/AlphaPrime-2.1.1.zip
+
+  desktop:
+    name: Desktop full tests + EXE
+    needs: assemble
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: alphaprime-source
+          path: bundle
+      - name: Extract
+        shell: pwsh
+        run: Expand-Archive -Path bundle\AlphaPrime-2.1.1.zip -DestinationPath source -Force
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install all Python dependencies
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          if (Test-Path requirements-local-llm.txt) { python -m pip install -r requirements-local-llm.txt }
+          python -m pip check
+      - name: Compile all production Python
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: python -m compileall -q ai_training_os tests scripts run_tests.py run_e2e.py build_executable.py
+      - name: Execute all desktop tests in isolation
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: python run_tests.py --timeout 600
+      - name: Real data acceptance
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: python scripts/real_acceptance.py
+      - name: Real end-to-end training and deployment
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: python run_e2e.py
+      - name: Build Windows executable
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: python build_executable.py
+      - name: Verify EXE
+        shell: pwsh
+        working-directory: source\desktop_engine
+        run: |
+          $exe='dist\AlphaPrime\AlphaPrime.exe'
+          if (!(Test-Path $exe)) { throw 'AlphaPrime.exe missing' }
+          if ((Get-Item $exe).Length -le 0) { throw 'AlphaPrime.exe empty' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AlphaPrime-Windows-${{ github.run_id }}
+          path: source\desktop_engine\dist\AlphaPrime\
+
+  llm:
+    name: Real local AI conversations
+    needs: assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: alphaprime-source
+          path: bundle
+      - name: Extract
+        run: unzip -q bundle/AlphaPrime-2.1.1.zip -d source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install local LLM stack
+        working-directory: source/desktop_engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-local-llm.txt
+      - name: Download and converse with a real local model
+        working-directory: source/desktop_engine
+        run: python scripts/real_acceptance.py --llm
+
+  mobile:
+    name: Android compile + unit tests
+    needs: assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: alphaprime-source
+          path: bundle
+      - run: unzip -q bundle/AlphaPrime-2.1.1.zip -d source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Install JS dependencies
+        working-directory: source
+        run: npm install --no-audit --no-fund
+      - name: Expo health check
+        working-directory: source
+        run: npx expo-doctor
+      - name: Typecheck
+        working-directory: source
+        run: npm run typecheck
+      - name: Jest
+        working-directory: source
+        run: npm test -- --runInBand
+      - name: Prebuild Android
+        working-directory: source
+        run: npx expo prebuild --platform android --non-interactive
+      - name: Build installable APK
+        working-directory: source/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AlphaPrime-Android-debug-${{ github.run_id }}
+          path: source/android/app/build/outputs/apk/debug/*.apk
+
+  android-real-ai:
+    name: Android emulator + real GGUF conversation
+    needs: mobile
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AlphaPrime-Android-debug-${{ github.run_id }}
+          path: apk
+      - name: Download real GGUF
+        run: |
+          curl -L --fail --retry 3 -o model.gguf 'https://huggingface.co/unsloth/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf?download=true'
+          sha256sum model.gguf
+      - name: Create UI helper
+        run: |
+          cat > /tmp/tap_text.py <<'PY'
+          import subprocess,sys,xml.etree.ElementTree as ET,re
+          text=sys.argv[1]
+          out=subprocess.check_output(['adb','shell','uiautomator','dump','/sdcard/window.xml'],text=True)
+          xml=subprocess.check_output(['adb','shell','cat','/sdcard/window.xml'],text=True)
+          root=ET.fromstring(xml)
+          for n in root.iter('node'):
+              if n.attrib.get('text')==text or n.attrib.get('content-desc')==text:
+                  b=n.attrib.get('bounds','')
+                  nums=list(map(int,re.findall(r'\d+',b)))
+                  subprocess.check_call(['adb','shell','input','tap',str((nums[0]+nums[2])//2),str((nums[1]+nums[3])//2)])
+                  raise SystemExit(0)
+          raise SystemExit(f'UI text not found: {text}')
+          PY
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            adb wait-for-device
+            adb install -r $(find apk -name '*.apk' | head -1)
+            adb push model.gguf /sdcard/alphaprime.gguf
+            adb shell run-as com.alphaprime.local mkdir -p files/models
+            adb shell run-as com.alphaprime.local cp /sdcard/alphaprime.gguf files/models/SmolLM2-360M-Instruct-Q4_K_M.gguf
+            adb shell monkey -p com.alphaprime.local 1
+            sleep 8
+            python /tmp/tap_text.py 'Modèle'
+            sleep 8
+            python /tmp/tap_text.py 'Vérifier réellement'
+            sleep 150
+            adb shell uiautomator dump /sdcard/model-ui.xml >/dev/null
+            adb shell cat /sdcard/model-ui.xml | grep -E 'Inférence locale validée|Chargement et inférence réels validés'
+            python /tmp/tap_text.py 'IA'
+            sleep 3
+            adb shell input tap 500 1200
+            adb shell input text 'AlphaPrimeRealChat'
+            python /tmp/tap_text.py 'Envoyer'
+            sleep 150
+            adb shell uiautomator dump /sdcard/chat-ui.xml >/dev/null
+            adb shell cat /sdcard/chat-ui.xml | grep -E 'local-inference-validated|Inférence locale validée'
+
+  hf-finetune:
+    name: Real model fine-tuning on Hugging Face
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Hugging Face CLI
+        run: python -m pip install -U huggingface_hub
+      - name: Require HF token
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: test -n "$HF_TOKEN"
+      - name: Start real T4 fine-tune
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: hf jobs uv run --name 'alphaprime-real-finetune' --flavor t4-small --timeout 30m --secrets HF_TOKEN https://raw.githubusercontent.com/belingamougoualexis-ctrl/Vanelle-os-/main/alphaprime_release/hf_real_finetune.py
