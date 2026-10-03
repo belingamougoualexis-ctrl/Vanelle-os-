@@ -22,7 +22,10 @@ def main():
     ck=torch.load(args.checkpoint,map_location=device)
     tf=transforms.Compose([transforms.Resize((ck["image_size"],ck["image_size"])),
                            transforms.ToTensor(),transforms.Normalize(ck["mean"],ck["std"])])
-    ds=datasets.ImageFolder(args.dataset,transform=tf)
+    full=datasets.ImageFolder(args.dataset,transform=tf)
+    indices=ck.get("val_indices")
+    if not indices: raise SystemExit("Le checkpoint ne contient pas de validation holdout.")
+    ds=torch.utils.data.Subset(full,indices)
     model,classes,_=load_model(Path(args.checkpoint),device)
     correct=0; total=0; per={c:{"correct":0,"total":0} for c in classes}
     with torch.no_grad():
