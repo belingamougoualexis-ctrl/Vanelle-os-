@@ -1,0 +1,13 @@
+{
+  "test_commands": [
+    "./gradlew test",
+    "./gradlew assembleDebug",
+    "python -m pytest -q"
+  ],
+  "max_repair_rounds": 3,
+  "roles": {
+    "openai": "coordinator and final synthesizer",
+    "claude": "implementation specialist",
+    "grok": "independent adversarial reviewer"
+  }
+}
