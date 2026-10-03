@@ -29,7 +29,10 @@
     ],
     "category": "Productivity",
     "shortDescription": "Studio local d'ingénierie et d'entraînement IA",
-    "longDescription": "Import de modèles GGUF, préparation de datasets, entraînement LoRA/SFT, évaluation comportementale et export de projets locaux.",
+    "resources": [
+      "universal_engine/*"
+    ],
+    "longDescription": "Import de modèles GGUF ou Transformers, préparation de datasets, entraînement LoRA/SFT, évaluation comportementale, amélioration et export de projets locaux.",
     "externalBin": [
       "binaries/llama-server-cpu",
       "binaries/llama-server-vulkan",
