@@ -99,7 +99,7 @@ struct EvalTest {
     max_chars: usize,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct EvalResult {
     name: String,
     prompt: String,
@@ -317,7 +317,7 @@ fn parse_dataset_line(v: &serde_json::Value) -> Option<(Option<String>, Option<S
         for m in arr {
             let role = m.get("role").and_then(|x| x.as_str()).unwrap_or("");
             let c = m.get("content").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-            if role == "user" && !c.is_empty() && user.is_none() { user = Some(c); }
+            if role == "user" && !c.is_empty() && user.is_none() { user = Some(c.clone()); }
             if role == "assistant" && !c.is_empty() { assistant = Some(c); }
         }
         let text = arr.iter().filter_map(|m| m.get("content").and_then(|x| x.as_str())).collect::<Vec<_>>().join("
@@ -442,7 +442,7 @@ async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objec
     if size > 20.0 { warnings.push("Le modèle est très volumineux pour une machine personnelle ; utilisez un contexte et un rank faibles au départ.".into()); }
     warnings.push("L'adaptation LoRA est recommandée pour conserver le modèle de base intact et limiter les ressources d'entraînement.".into());
     Ok(Advisor {
-        model: m.id,
+        model: m.id.clone(),
         model_size_gb: size,
         detected_family: guess_family(&m.id),
         training_mode: "LoRA / SFT".into(),
@@ -695,7 +695,7 @@ async fn start_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_i
         args.extend(["--lora-seed".into(),"42".into()]);
     }
     if let Ok(text) = fs::read_to_string(&dataset) {
-        if text.lines().take(5).all(|l| l.contains(""messages"")) {
+        if text.lines().take(5).all(|l| l.contains("\"messages\"")) {
             args.push("--assistant-loss-only".into());
         }
     }
@@ -776,7 +776,8 @@ async fn evaluate_project(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project
     let average=if results.is_empty(){0}else{results.iter().map(|x|x.score).sum::<u32>()/(results.len() as u32)};
     let report=ProjectEvaluation{project_id,passed,failed,average_score:average,results};
     if let Ok(project_dir)=fs::canonicalize(s.projects_dir.join(&report.project_id)) {
-        let _=fs::write(project_dir.join("evaluation.json"), serde_json::to_vec_pretty(&report));
+        let bytes=serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?;
+        fs::write(project_dir.join("evaluation.json"), bytes).map_err(|e|e.to_string())?;
     }
     let mut pp=p;
     pp.status=if failed==0{"Évaluation réussie".into()}else{"Échecs détectés — amélioration possible".into()};
@@ -800,7 +801,7 @@ async fn generate_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,pro
             examples.push(serde_json::json!({"messages":[{"role":"user","content":format!("Cas à corriger: {}",f.name)},{"role":"assistant","content":answer}]}));
         }
     }
-    if examples.is_empty(){return Err("Aucune correction générée.")}
+    if examples.is_empty(){return Err("Aucune correction générée.".to_string())}
 
     let path=PathBuf::from(dataset);
     let mut file=String::new();
