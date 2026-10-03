@@ -21,10 +21,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/alphaprime/source
-          find alphaprime_release/bundle.first -type f -name '*.b64' -print0 | sort -zV | xargs -0 cat > /tmp/alphaprime/archive.b64
-          find alphaprime_release/bundle.parts -type f -name '*.b64' ! -name 'part-01.b64' -print0 | sort -zV | xargs -0 cat >> /tmp/alphaprime/archive.b64
+          find alphaprime_release/bundle_v2 -type f -name '*.b64' -print0 | sort -zV | xargs -0 cat > /tmp/alphaprime/archive.b64
           base64 -d /tmp/alphaprime/archive.b64 > /tmp/alphaprime/AlphaPrime-2.1.1.zip
-          echo "779dd54d3ef6fbfc8f5eef095bd72ceb84baaa21fae7788da88b0da7008f091d  /tmp/alphaprime/AlphaPrime-2.1.1.zip" | sha256sum -c -
+          echo "cdbc84de85210a472692b83207ed5c27c72c98b1232c81b88d95e16cf45eed01  /tmp/alphaprime/AlphaPrime-2.1.1.zip" | sha256sum -c -
           unzip -t /tmp/alphaprime/AlphaPrime-2.1.1.zip
           unzip -q /tmp/alphaprime/AlphaPrime-2.1.1.zip -d /tmp/alphaprime/source
       - uses: actions/upload-artifact@v4
