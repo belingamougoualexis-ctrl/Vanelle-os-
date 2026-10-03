@@ -34,8 +34,11 @@
       "binaries/llama-server-cpu",
       "binaries/llama-server-vulkan",
       "binaries/llama-finetune-lora",
+      "binaries/llama-finetune-lora-vulkan",
       "binaries/llama-export-lora",
-      "binaries/llama-perplexity"
+      "binaries/llama-export-lora-vulkan",
+      "binaries/llama-perplexity",
+      "binaries/llama-perplexity-vulkan"
     ]
   }
 }
