@@ -44,7 +44,7 @@ def main():
         transforms.RandomResizedCrop(args.image_size,scale=(.75,1.0)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(weights.meta["mean"],weights.meta["std"])
+        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
     ])
     val_tf=transforms.Compose([
         transforms.Resize((args.image_size,args.image_size)),
