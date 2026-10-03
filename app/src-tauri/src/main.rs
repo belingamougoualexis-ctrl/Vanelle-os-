@@ -398,8 +398,7 @@ fn parse_dataset_line(v: &serde_json::Value) -> Option<(Option<String>, Option<S
             if role == "user" && !c.is_empty() && user.is_none() { user = Some(c); }
             else if role == "assistant" && !c.is_empty() { assistant = Some(c); }
         }
-        let text = arr.iter().filter_map(|m| m.get("content").and_then(|x| x.as_str())).collect::<Vec<_>>().join("
-");
+        let text = arr.iter().filter_map(|m| m.get("content").and_then(|x| x.as_str())).collect::<Vec<_>>().join("\n");
         if !text.trim().is_empty() { return Some((user, assistant, text)); }
     }
     let input = ["instruction", "prompt", "question", "input", "user"].iter()
@@ -494,6 +493,7 @@ fn guess_family(id: &str) -> String {
 
 async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objective: &str) -> Result<Advisor> {
     let m = models(&s.dir)?.into_iter().find(|x| x.id == model_id).ok_or_else(|| anyhow!("Modèle introuvable"))?;
+    let model_id_owned = m.id.clone();
     let size = m.size_bytes as f64 / 1073741824.0;
     let gpu = vulkan_available(app).await;
     let (context, batch, rank, modules) = if size >= 12.0 {
@@ -507,7 +507,7 @@ async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objec
     };
     let mut reasons = vec![
         format!("Taille réelle du fichier : {:.2} Go.", size),
-        format!("Famille détectée : {}.", guess_family(&m.id)),
+        format!("Famille détectée : {}.", guess_family(&model_id_owned)),
         format!("Objectif fourni : {}.", objective.trim()),
         if gpu { "Vulkan est disponible sur cette machine ; Vanelle peut proposer l'offload GPU.".into() }
         else { "Aucun GPU Vulkan détecté ; Vanelle propose le CPU pour rester exécutable localement.".into() },
@@ -520,9 +520,9 @@ async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objec
     if size > 20.0 { warnings.push("Le modèle est très volumineux pour une machine personnelle ; utilisez un contexte et un rank faibles au départ.".into()); }
     warnings.push("L'adaptation LoRA est recommandée pour conserver le modèle de base intact et limiter les ressources d'entraînement.".into());
     Ok(Advisor {
-        model: m.id.clone(),
+        model: model_id_owned,
         model_size_gb: size,
-        detected_family: guess_family(&m.id),
+        detected_family: guess_family(&model_id_owned),
         training_mode: "LoRA / SFT".into(),
         context,
         batch,
@@ -902,7 +902,7 @@ async fn start_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_i
         while let Some(event)=rx.recv().await{
             match event{
                 CommandEvent::Stdout(line)|CommandEvent::Stderr(line)=>{
-                    let text=String::from_utf8_lossy(&line).replace('\\n',"");
+                    let text=String::from_utf8_lossy(&line).replace("\n","");
                     let _=handle.emit("training://log",serde_json::json!({"project_id":project_id,"line":text}));
                 },
                 CommandEvent::Terminated(payload)=>{
