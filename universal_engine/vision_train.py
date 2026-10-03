@@ -90,7 +90,7 @@ def main():
             best_acc=val_acc
             torch.save({"state_dict":model.state_dict(),"classes":classes,"image_size":args.image_size,
                         "mean":list([0.485,0.456,0.406]),"std":list([0.229,0.224,0.225]),
-                        "architecture":"mobilenet_v3_small","num_classes":len(classes)},out/"best.pt")
+                        "architecture":"mobilenet_v3_small","num_classes":len(classes),"val_indices":list(val_ds.indices),"seed":args.seed},out/"best.pt")
     summary={"format":"vision-classifier","architecture":"mobilenet_v3_small","classes":classes,
              "num_classes":len(classes),"images":len(base),"train_images":train_n,"val_images":val_n,
              "best_val_accuracy":best_acc,"device":str(device),"history":history,
