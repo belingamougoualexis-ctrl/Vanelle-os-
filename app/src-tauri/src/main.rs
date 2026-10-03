@@ -129,8 +129,8 @@ struct AppState {
     adapter: RwLock<Option<PathBuf>>,
     config: RwLock<Config>,
     child: Mutex<Option<CommandChild>>,
-    training_child: Mutex<Option<CommandChild>>,
-    training_running: Mutex<bool>,
+    training_child: Arc<Mutex<Option<CommandChild>>>,
+    training_running: Arc<Mutex<bool>>,
     dir: PathBuf,
     docs_path: PathBuf,
     model_state_path: PathBuf,
@@ -849,7 +849,7 @@ fn run()->Result<()>{
         let projects_dir=app_data.join("projects");fs::create_dir_all(&projects_dir)?;
         let s=Arc::new(AppState{
           model:RwLock::new(initial),adapter:RwLock::new(None),config:RwLock::new(Config::default()),
-          child:Mutex::new(None),training_child:Mutex::new(None),training_running:Mutex::new(false),
+          child:Mutex::new(None),training_child:Arc::new(Mutex::new(None)),training_running:Arc::new(Mutex::new(false)),
           dir:d,docs_path,model_state_path,docs:RwLock::new(initial_docs),projects_dir
         });
         app.manage(s.clone());
