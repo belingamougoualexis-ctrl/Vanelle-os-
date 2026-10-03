@@ -95,6 +95,22 @@ function App(){
   async function chooseModel(id){
     try{await invoke("set_model",{id});setModel(id);persist({...load(),model:id});setStatus("Modèle actif · "+id)}catch(e){setStatus(String(e))}
   }
+  async function removeModel(id){
+    try{await invoke("remove_model",{id});if(id===model){await invoke("stop_engine");setModel("");}await refresh();setStatus("Modèle supprimé")}
+    catch(e){setStatus(String(e))}
+  }
+  function deleteChat(){
+    if(!active)return;
+    const next=sessions.length<=1?[blankChat()]:sessions.filter(s=>s.id!==active.id);
+    const nextId=next[0].id;
+    setSessions(next);setActiveId(nextId);persist({model,sessions:next,activeId:nextId,settings,docs,memory,projectId});
+  }
+  function removeMemory(i){
+    const x=memory.filter((_,n)=>n!==i);setMemory(x);persist({memory:x});
+  }
+  function saveSettings(){
+    persist({settings});setStatus("Réglages locaux enregistrés");
+  }
   async function inspect(id=project?.model_id||model){
     if(!id)return;
     try{setInspection(await invoke("model_inspection",{model_id:id}));setStatus("Inspection réelle terminée")}catch(e){setStatus(String(e))}
@@ -105,7 +121,9 @@ function App(){
     if(!model){setStatus("Sélectionnez d'abord un modèle de base");return}
     try{
       const p=await invoke("create_project",{name:projectName.trim(),objective:objective.trim(),model_id:model});
-      await loadProjects();selectProject(p.id);setTab("projects");setStatus("Projet créé");
+      setProjects(old=>[p,...old.filter(x=>x.id!==p.id)]);
+      setProjectId(p.id);setProjectName(p.name);setObjective(p.objective);setDataset(null);setAdvisor(null);setEvalReport(null);setTests(defaultTests(p.objective));
+      persist({projectId:p.id});setTab("projects");setStatus("Projet créé");
     }catch(e){setStatus(String(e))}
   }
 
@@ -185,6 +203,7 @@ function App(){
         <button className={tab==="training"?"active":""} onClick={()=>setTab("training")}><span>05</span> Training Lab</button>
         <button className={tab==="evaluation"?"active":""} onClick={()=>setTab("evaluation")}><span>06</span> Evaluation Lab</button>
         <button className={tab==="chat"?"active":""} onClick={()=>setTab("chat")}><span>07</span> Chat local</button>
+        <button className={tab==="settings"?"active":""} onClick={()=>setTab("settings")}><span>08</span> Réglages</button>
       </nav>
       <div className="side-bottom">
         <button onClick={addDocument}>Ajouter un document</button>
@@ -235,7 +254,7 @@ function App(){
 
       {tab==="models"&&<section className="page">
         <div className="section-head"><div><span className="section-kicker">MODEL REGISTRY</span><h3>Modèles locaux</h3><p>Vanelle travaille sur les modèles GGUF réellement présents sur la machine.</p></div><button className="primary-btn" onClick={importModel}>Importer un GGUF</button></div>
-        <div className="model-grid">{models.map(m=><div className={m.id===model?"model-card active":"model-card"} key={m.id}><div className="model-top"><span className="model-kind">GGUF</span><b>{m.id}</b></div><div className="model-size-big">{(m.size_bytes/1073741824).toFixed(2)} Go</div><div className="model-actions"><button onClick={()=>chooseModel(m.id)}>{m.id===model?"Actif":"Utiliser"}</button><button onClick={()=>inspect(m.id)}>Inspecter</button></div></div>)}{!models.length&&<div className="empty-state"><b>Aucun modèle</b><span>Importez un fichier GGUF existant.</span></div>}</div>
+        <div className="model-grid">{models.map(m=><div className={m.id===model?"model-card active":"model-card"} key={m.id}><div className="model-top"><span className="model-kind">GGUF</span><b>{m.id}</b></div><div className="model-size-big">{(m.size_bytes/1073741824).toFixed(2)} Go</div><div className="model-actions"><button onClick={()=>chooseModel(m.id)}>{m.id===model?"Actif":"Utiliser"}</button><button onClick={()=>inspect(m.id)}>Inspecter</button><button className="danger-light" onClick={()=>removeModel(m.id)}>Supprimer</button></div></div>)}{!models.length&&<div className="empty-state"><b>Aucun modèle</b><span>Importez un fichier GGUF existant.</span></div>}</div>
         {inspection&&<div className="inspection"><div><b>Inspection réelle</b><span>{inspection.id} · {inspection.family}</span></div><div><small>Type</small><b>{inspection.model_ftype||"non exposé"}</b></div><div><small>Vision</small><b>{inspection.modalities?.vision?"Oui":"Non"}</b></div><div><small>Chat template</small><b>{inspection.chat_template?"Détecté":"Non exposé"}</b></div></div>}
       </section>}
 
@@ -246,7 +265,11 @@ function App(){
         </div>
         <div className="panel">
           <div className="panel-head"><div><span className="section-kicker">DOCUMENTS</span><h3>Sources locales</h3></div><button onClick={addDocument}>Ajouter</button></div>
-          <div className="doc-list">{docs.map(d=><div className="doc-card" key={d.name}><div><b>{d.name}</b><span>{(d.size_bytes/1024).toFixed(1)} Ko</span></div><button onClick={()=>removeDocument(d.name)}>Supprimer</button></div>)}</div>
+          <div className="doc-list">{docs.map(d=><div className="doc-card" key={d.name}><div><b>{d.name}</b><span>{(d.size_bytes/1024).toFixed(1)} Ko</span></div><button onClick={()=>removeDocument(d.name)}>Supprimer</button></div>)}{!docs.length&&<div className="empty-note">Aucune source locale.</div>}</div>
+        </div>
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">MEMORY</span><h3>Mémoire locale</h3></div><button onClick={addMemory}>Ajouter</button></div>
+          <div className="memory-list">{memory.map((x,i)=><div className="memory-card" key={i}><span>{x}</span><button onClick={()=>removeMemory(i)}>Supprimer</button></div>)}{!memory.length&&<div className="empty-note">Aucune mémoire locale.</div>}</div>
         </div>
         <div className="panel full-span">
           <div className="panel-head"><div><span className="section-kicker">MODEL ADVISOR</span><h3>Comment Vanelle choisit la stratégie</h3></div><button className="primary-btn" onClick={runAdvisor} disabled={!project}>Analyser</button></div>
@@ -264,6 +287,28 @@ function App(){
         <div className="section-head"><div><span className="section-kicker">EVALUATION LAB</span><h3>Tester l'IA comme un utilisateur</h3><p>Vanelle envoie plusieurs scénarios à l'IA et vérifie objectivement les réponses et les contraintes définies.</p></div><div className="inline-actions"><button onClick={improve} disabled={!evalReport?.failed}>Corriger les échecs</button><button className="primary-btn" onClick={evaluate} disabled={!project}>Lancer les tests</button></div></div>
         <div className="scenario-grid">{tests.map((t,i)=><div className="scenario" key={i}><span>{String(i+1).padStart(2,"0")}</span><b>{t.name}</b><p>{t.persona}</p><small>{t.prompt}</small></div>)}</div>
         {evalReport&&<div className="report"><div className="report-head"><div><span className="section-kicker">TEST REPORT</span><h3>{evalReport.average_score}% score moyen</h3></div><span>{evalReport.passed} réussis · {evalReport.failed} échecs</span></div>{evalReport.results.map((r,i)=><details className={r.passed?"result pass":"result fail"} key={i}><summary><b>{r.name}</b><span>{r.score}%</span></summary><p>{r.response}</p>{r.reasons.length>0&&<ul>{r.reasons.map((x,n)=><li key={n}>{x}</li>)}</ul>}</details>)}</div>}
+      </section>}
+
+      {tab==="settings"&&<section className="page two-col">
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">LOCAL ENGINE</span><h3>Réglages du moteur</h3></div></div>
+          <label>Mode matériel<select value={settings.gpu_mode} onChange={e=>setSettings({...settings,gpu_mode:e.target.value})}><option value="auto">Auto</option><option value="gpu">GPU Vulkan</option><option value="cpu">CPU uniquement</option></select></label>
+          <label>Couches GPU<select value={settings.gpu_layers} onChange={e=>setSettings({...settings,gpu_layers:e.target.value})}><option value="auto">Auto</option><option value="all">Toutes</option><option value="0">0</option></select></label>
+          <label>Contexte<input type="number" min="256" max="131072" value={settings.context_size} onChange={e=>setSettings({...settings,context_size:Number(e.target.value)||4096})}/></label>
+          <label>Température<input type="number" min="0" max="2" step=".05" value={settings.temperature} onChange={e=>setSettings({...settings,temperature:Number(e.target.value)})}/></label>
+          <label>Threads CPU<input type="number" min="0" max="256" value={settings.threads} onChange={e=>setSettings({...settings,threads:Math.max(0,Number(e.target.value)||0)})}/></label>
+          <label>Max tokens<input type="number" min="32" max="8192" value={settings.max_tokens} onChange={e=>setSettings({...settings,max_tokens:Number(e.target.value)||1024})}/></label>
+          <button className="primary-btn" onClick={saveSettings}>Enregistrer</button>
+        </div>
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">SYSTEM PROMPT</span><h3>Comportement de Vanelle</h3></div></div>
+          <label>Prompt système<textarea value={settings.system_prompt} onChange={e=>setSettings({...settings,system_prompt:e.target.value})}/></label>
+          <div className="hardware-box"><span>Machine détectée</span><b>{hardware?.cpu||"—"}</b><b>{hardware?.ram||"—"}</b><b>{hardware?.gpu||"—"}</b><b>{hardware?.vram||"—"}</b><b>{hardware?.vulkan||"—"}</b></div>
+        </div>
+        <div className="panel full-span">
+          <div className="panel-head"><div><span className="section-kicker">CONVERSATIONS</span><h3>Gestion locale</h3></div><button onClick={deleteChat}>Supprimer la conversation active</button></div>
+          <div className="conversation-admin">{sessions.map(s=><div key={s.id}><span>{s.title}</span><button onClick={()=>{setActiveId(s.id);setTab("chat")}}>Ouvrir</button></div>)}</div>
+        </div>
       </section>}
 
       {tab==="chat"&&<section className="chat-page">
