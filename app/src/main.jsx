@@ -128,7 +128,7 @@ function App(){
    <label>Prompt système<textarea value={settings.system_prompt} onChange={e=>setSettings({...settings,system_prompt:e.target.value})}/></label>
    <div className="card-head"><h3>Mémoire locale</h3><span>{memory.length} élément(s)</span></div>
    <div className="memory">{memory.map((x,i)=><div key={i}><span>{x}</span><button onClick={()=>deleteMemory(i)}>Supprimer</button></div>)}</div>
-   <div className="hardware"><b>Machine</b><div>{hardware?.cpu||"CPU : —"}</div><div>{hardware?.ram||"RAM : —"}</div><div>{hardware?.gpu||"GPU : —"}</div><div>{hardware?.vulkan||"Vulkan : détection —"}</div></div>
+   <div className="hardware"><b>Machine</b><div>{hardware?.cpu||"CPU : —"}</div><div>{hardware?.ram||"RAM : —"}</div><div>{hardware?.gpu||"GPU : —"}</div><div>{hardware?.vram||"VRAM : —"}</div><div>{hardware?.vulkan||"Vulkan : détection —"}</div></div>
    <button className="primary wide" onClick={async()=>{try{persist(sessions,settings,docs,memory,model);if(model){await invoke("set_model",{id:model});}setShowSettings(false);setStatus("Réglages enregistrés. Moteur redémarré avec la nouvelle configuration.")}catch(e){setStatus(String(e))}}}>Enregistrer</button>
   </div></div>}
  </div>
