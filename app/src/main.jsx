@@ -28,6 +28,7 @@ function App(){
    try{
      const m=await invoke("list_models"); setModels(m);
      const cur=await invoke("current_model"); setModel(cur||model);
+     const ds=await invoke("list_documents"); setDocs(ds);
      const hw=await invoke("hardware_info"); setHardware(hw);
      setStatus(cur?("Modèle actif : "+cur):"Importez un modèle GGUF pour commencer");
    }catch(e){setStatus(String(e))}
@@ -81,6 +82,16 @@ function App(){
  }
  function addMemory(){const v=prompt("Ajouter une mémoire locale :");if(v?.trim()){persist(sessions,settings,docs,[...memory,v.trim()].slice(-100),model)}}
  function deleteMemory(i){persist(sessions,settings,docs,memory.filter((_,n)=>n!==i),model)}
+ async function deleteDocument(name){try{await invoke("remove_document",{name});await refresh();setStatus("Document supprimé : "+name)}catch(e){setStatus(String(e))}}
+ function deleteChat(){
+   if(!active)return;
+   if(sessions.length<=1){const s=initialSession();persist([s],settings,docs,memory,model);setActiveId(s.id);return}
+   const next=sessions.filter(s=>s.id!==active.id);persist(next,settings,docs,memory,model);setActiveId(next[0].id)
+ }
+ function exportChat(){
+   const data=JSON.stringify({title:active.title,messages:active.messages,exported_at:new Date().toISOString()},null,2);
+   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));a.download=((active.title||"conversation").replace(/[^a-z0-9-_]+/gi,"_")||"conversation")+".json";a.click();URL.revokeObjectURL(a.href)
+ }
 
  const filtered=sessions.filter(s=>!search||s.title.toLowerCase().includes(search.toLowerCase()));
  return <div className="app">
@@ -94,11 +105,13 @@ function App(){
    <div className="list">{models.map(m=><div className={"model "+(m.id===model?"selected":"")} key={m.id}><button onClick={async()=>{try{await invoke("set_model",{id:m.id});setModel(m.id);persist(sessions,settings,docs,memory,m.id);setStatus("Modèle actif : "+m.id)}catch(e){setStatus(String(e))}}}><span>{m.id}</span><small>{(m.size_bytes/1073741824).toFixed(2)} Go</small></button><button className="mini" onClick={()=>removeModel(m.id)} aria-label="Supprimer">×</button></div>)}</div>
    {!models.length&&<div className="muted">Aucun modèle importé.</div>}
    <div className="spacer"/>
+   <div className="label">Documents</div>
+   <div className="list docs-list">{docs.map(d=><div className="model" key={d.name}><button onClick={()=>setStatus(d.name+" est indexé localement") }><span>{d.name}</span><small>{(d.size_bytes/1024).toFixed(1)} Ko</small></button><button className="mini" onClick={()=>deleteDocument(d.name)} aria-label="Supprimer le document">×</button></div>)}</div>
    <div className="side-actions"><button onClick={importModel}>Importer GGUF</button><button onClick={importDoc}>Ajouter document</button><button onClick={addMemory}>Mémoire</button></div>
    <div className="privacy">Traitement local. Aucun fournisseur IA externe obligatoire.</div>
   </aside>
   <main>
-   <header><div><h1>{active.title}</h1><p>{status}</p></div><button onClick={()=>setShowSettings(true)}>Réglages</button></header>
+   <header><div><h1>{active.title}</h1><p>{status}</p></div><div className="header-actions"><button onClick={exportChat}>Exporter</button><button onClick={deleteChat}>Supprimer</button><button onClick={()=>setShowSettings(true)}>Réglages</button></div></header>
    <section className="messages">
     {!active.messages.length&&<div className="empty"><h2>Votre assistant local</h2><p>Importez un modèle GGUF, puis commencez une conversation.</p><div className="caps"><span>CPU</span><span>GPU Vulkan automatique</span><span>Documents locaux</span><span>Mémoire locale</span></div></div>}
     {active.messages.map((m,i)=><article key={i} className={m.role}><div className="who">{m.role==="user"?"Vous":m.role==="assistant"?"Vanelle":"Contexte"}</div><div className="content">{m.content||(busy&&i===active.messages.length-1?"Génération…":"")}</div></article>)}
@@ -110,6 +123,7 @@ function App(){
    <label>Couches GPU<select value={settings.gpu_layers} onChange={e=>setSettings({...settings,gpu_layers:e.target.value})}><option value="auto">Auto</option><option value="all">Toutes</option><option value="0">0</option></select></label>
    <label>Contexte<input type="number" min="1024" max="131072" value={settings.context_size} onChange={e=>setSettings({...settings,context_size:Number(e.target.value)||4096})}/></label>
    <label>Température<input type="number" min="0" max="2" step=".05" value={settings.temperature} onChange={e=>setSettings({...settings,temperature:Number(e.target.value)||0})}/></label>
+   <label>Threads CPU (0 = automatique)<input type="number" min="0" max="256" value={settings.threads} onChange={e=>setSettings({...settings,threads:Math.max(0,Number(e.target.value)||0)})}/></label>
    <label>Max tokens<input type="number" min="32" max="8192" value={settings.max_tokens} onChange={e=>setSettings({...settings,max_tokens:Number(e.target.value)||1024})}/></label>
    <label>Prompt système<textarea value={settings.system_prompt} onChange={e=>setSettings({...settings,system_prompt:e.target.value})}/></label>
    <div className="card-head"><h3>Mémoire locale</h3><span>{memory.length} élément(s)</span></div>
