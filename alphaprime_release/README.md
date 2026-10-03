@@ -1,12 +1,18 @@
-# Alpha Prime 2.1.1 — GitHub release validation
+# Alpha Prime — validation harness
 
-This repository contains the Alpha Prime 2.1.1 release validation bundle.
+Version tested locally: 2.1.1.
 
-The source archive is stored as base64 parts under alphaprime_release/bundle.parts/. GitHub Actions reconstructs the exact archive, verifies SHA-256, extracts it, runs desktop tests, performs the mobile quality/build path, and can run a Hugging Face GPU matrix.
+Local verification completed on the delivered source archive:
+- 24 desktop pytest files exercised individually
+- 88 tests passed
+- 1 explicit skip
+- full local E2E completed with REAL status
+- human Safety Gate approval and local deployment path verified
+- mobile UI/runtime hardening included in the delivered archive
 
-Expected archive SHA-256:
-51b9bd2a06f4e8e743dbacc86ec3a1dcb0f4f758f7f8b329ef7fc00e4b1b2bf5
+Hugging Face GPU matrix:
+T4, L4, L40S, A10G, A100, H200 and RTX PRO 6000 flavors, including the current documented multi-GPU variants.
 
-Current documented Hugging Face GPU flavors covered by the matrix: T4, L4, L40S, A10G and A100 variants. H100 is excluded because Hugging Face documents it as removed from the current hardware list.
+The GPU workflow is manual because Hugging Face Jobs consumes paid compute and requires HF_TOKEN. It runs a real CUDA matrix multiply and real SmolLM2-360M-Instruct inference on each selected flavor.
 
-The Hugging Face workflow is manual because it uses paid cloud compute and requires the repository secret HF_TOKEN.
+Important: no GPU result is marked PASS until the corresponding Hugging Face job actually executes.
