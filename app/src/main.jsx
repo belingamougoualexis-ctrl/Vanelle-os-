@@ -94,6 +94,10 @@ function App(){
    const data=JSON.stringify({title:active.title,messages:active.messages,exported_at:new Date().toISOString()},null,2);
    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));a.download=((active.title||"conversation").replace(/[^a-z0-9-_]+/gi,"_")||"conversation")+".json";a.click();URL.revokeObjectURL(a.href)
  }
+ async function stopGeneration(){
+   try{await invoke("stop_engine");setBusy(false);setStatus("Génération arrêtée. Le moteur sera relancé au prochain message.")}
+   catch(e){setStatus(String(e))}
+ }
 
  const filtered=sessions.filter(s=>!search||s.title.toLowerCase().includes(search.toLowerCase()));
  return <div className="app">
@@ -118,7 +122,7 @@ function App(){
     {!active.messages.length&&<div className="empty"><h2>Votre assistant local</h2><p>Importez un modèle GGUF, puis commencez une conversation.</p><div className="caps"><span>CPU</span><span>GPU Vulkan automatique</span><span>Documents locaux</span><span>Mémoire locale</span></div></div>}
     {active.messages.map((m,i)=><article key={i} className={m.role}><div className="who">{m.role==="user"?"Vous":m.role==="assistant"?"Vanelle":"Contexte"}</div><div className="content">{m.content||(busy&&i===active.messages.length-1?"Génération…":"")}</div></article>)}
    </section>
-   <footer><textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder="Écrivez votre message…"/><div className="footerbar"><span>{hardware?.gpu||"GPU : détection en cours"} · Entrée pour envoyer</span><button className="send" disabled={busy||!input.trim()} onClick={send}>Envoyer</button>{busy&&<button onClick={async()=>{try{await invoke("stop_engine");setBusy(false);setStatus("Génération arrêtée. Le moteur sera relancé au prochain message.")}catch(e){setStatus(String(e))}}}>Arrêter</button></div></footer>
+   <footer><textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder="Écrivez votre message…"/><div className="footerbar"><span>{hardware?.gpu||"GPU : détection en cours"} · Entrée pour envoyer</span><div><button className="send" disabled={busy||!input.trim()} onClick={send}>Envoyer</button>{busy&&<button onClick={stopGeneration}>Arrêter</button>}</div></div></footer>
   </main>
   {showSettings&&<div className="modal"><div className="card"><div className="card-head"><h2>Réglages locaux</h2><button onClick={()=>setShowSettings(false)}>Fermer</button></div>
    <label>Mode matériel<select value={settings.gpu_mode} onChange={e=>setSettings({...settings,gpu_mode:e.target.value})}><option value="auto">Auto : GPU puis CPU</option><option value="gpu">GPU Vulkan</option><option value="cpu">CPU uniquement</option></select></label>
