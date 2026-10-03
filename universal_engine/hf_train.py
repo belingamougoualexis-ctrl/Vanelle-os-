@@ -120,15 +120,47 @@ def main() -> int:
     except Exception:
         pass
 
+    def target_modules_for_model() -> str | list[str]:
+        model_type = str(getattr(model.config, "model_type", "")).lower()
+        if model_type in {"gpt2", "gpt_bigcode"}:
+            return ["c_attn", "c_proj", "c_fc"]
+        if model_type in {"llama", "mistral", "qwen2", "qwen3", "gemma", "gemma2", "gemma3",
+                          "phi3", "phi4", "qwen2_moe", "mixtral"}:
+            return ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        return "all-linear"
+
+    target_modules = target_modules_for_model()
     lora = LoraConfig(
         r=args.rank,
         lora_alpha=args.alpha,
         lora_dropout=0.05,
         bias="none",
         task_type=TaskType.CAUSAL_LM,
-        target_modules="all-linear",
+        target_modules=target_modules,
     )
-    model = get_peft_model(model, lora)
+    try:
+        model = get_peft_model(model, lora)
+    except ValueError as exc:
+        if target_modules != "all-linear":
+            raise
+        linear_names = {
+            name.split(".")[-1]
+            for name, module in model.named_modules()
+            if module.__class__.__name__ == "Linear" and not name.endswith("lm_head")
+        }
+        if not linear_names:
+            raise RuntimeError(f"Impossible de déterminer les modules LoRA pour {model.config.model_type}: {exc}") from exc
+        fallback = sorted(linear_names)
+        log(f"LoRA fallback modules: {fallback}")
+        lora = LoraConfig(
+            r=args.rank,
+            lora_alpha=args.alpha,
+            lora_dropout=0.05,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+            target_modules=fallback,
+        )
+        model = get_peft_model(model, lora)
     model.print_trainable_parameters()
 
     ds = make_dataset(tokenizer, records, args.max_length)
