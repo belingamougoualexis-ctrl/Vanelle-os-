@@ -109,6 +109,27 @@ fn copy_images_only(src:&Path,dst:&Path)->Result<usize>{
     Ok(count)
 }
 
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct VisionTestInfo {
+    project_id: String,
+    dataset_path: Option<String>,
+    images: usize,
+    classes: Vec<String>,
+    report_path: Option<String>,
+    correction_path: Option<String>,
+    accuracy: Option<f64>,
+    errors: usize,
+    status: String,
+}
+fn vision_test_file(dir:&Path,id:&str)->PathBuf{dir.join(id).join("vision-test.json")}
+fn load_vision_test_info(dir:&Path,id:&str)->VisionTestInfo{
+    fs::read_to_string(vision_test_file(dir,id)).ok().and_then(|s|serde_json::from_str(&s).ok()).unwrap_or_else(||VisionTestInfo{
+        project_id:id.into(),dataset_path:None,images:0,classes:Vec::new(),report_path:None,correction_path:None,accuracy:None,errors:0,status:"Aucun benchmark de test".into()
+    })
+}
+fn save_vision_test_info(dir:&Path,v:&VisionTestInfo)->Result<()>{fs::write(vision_test_file(dir,&v.project_id),serde_json::to_vec_pretty(v)?)?;Ok(())}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Advisor {
     model: String,
@@ -847,6 +868,36 @@ async fn import_vision_dataset(s:State<'_,Arc<AppState>>,project_id:String,path:
     Ok(v)
 }
 
+
+#[tauri::command]
+async fn vision_test_info(s:State<'_,Arc<AppState>>,project_id:String)->Result<VisionTestInfo,String>{Ok(load_vision_test_info(&s.projects_dir,&project_id))}
+
+#[tauri::command]
+async fn import_vision_test_dataset(s:State<'_,Arc<AppState>>,project_id:String,path:String)->Result<VisionTestInfo,String>{
+    let _=load_project(&s.projects_dir,&project_id).map_err(|e|e.to_string())?;let src=Path::new(&path);
+    if !src.is_dir(){return Err("Sélectionnez un dossier de benchmark avec un dossier par classe.".into());}
+    let classes=fs::read_dir(src).map_err(|e|e.to_string())?.flatten().filter(|e|e.path().is_dir()).map(|e|e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+    if classes.len()<2{return Err("Le benchmark doit contenir au moins deux classes.".into());}
+    let total=classes.iter().map(|c|image_count(&src.join(c))).sum::<usize>();if total<4{return Err("Benchmark trop petit : ajoutez au moins 4 images.".into());}
+    let dir=s.projects_dir.join(&project_id);fs::create_dir_all(&dir).map_err(|e|e.to_string())?;let target=dir.join("vision-test-dataset");if target.exists(){fs::remove_dir_all(&target).map_err(|e|e.to_string())?;}fs::create_dir_all(&target).map_err(|e|e.to_string())?;
+    for class in &classes{copy_images_only(&src.join(class),&target.join(class)).map_err(|e|e.to_string())?;}
+    let v=VisionTestInfo{project_id:project_id.clone(),dataset_path:Some(target.to_string_lossy().into_owned()),images:total,classes,report_path:None,correction_path:None,accuracy:None,errors:0,status:"Benchmark prêt — test uniquement".into()};save_vision_test_info(&s.projects_dir,&v).map_err(|e|e.to_string())?;Ok(v)
+}
+
+#[tauri::command]
+async fn run_vision_test(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<serde_json::Value,String>{
+    let v=load_vision_info(&s.projects_dir,&project_id);let checkpoint=v.checkpoint_path.ok_or("Aucun modèle vision entraîné à tester.")?;let t=load_vision_test_info(&s.projects_dir,&project_id);let dataset=t.dataset_path.ok_or("Importez d'abord un benchmark de test.")?;
+    let out=s.projects_dir.join(&project_id).join("vision-test-report.json");let args=vec!["--dataset".into(),dataset.clone(),"--checkpoint".into(),checkpoint,"--output".into(),out.to_string_lossy().into_owned()];let r=run_python(&app,"vision_test.py",&args).await.map_err(|e|e.to_string())?;
+    if !r.status.success(){return Err(String::from_utf8_lossy(&r.stderr).trim().to_string());}let report:serde_json::Value=serde_json::from_slice(&fs::read(&out).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let mut tt=t;tt.report_path=Some(out.to_string_lossy().into_owned());tt.accuracy=report.get("accuracy").and_then(|x|x.as_f64());tt.errors=report.get("errors").and_then(|x|x.as_u64()).unwrap_or(0) as usize;tt.status=if tt.errors==0{"Benchmark réussi — aucune erreur détectée".into()}else{"Erreurs détectées — diagnostic disponible".into()};save_vision_test_info(&s.projects_dir,&tt).map_err(|e|e.to_string())?;Ok(report)
+}
+
+#[tauri::command]
+async fn make_vision_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<VisionTestInfo,String>{
+    let t=load_vision_test_info(&s.projects_dir,&project_id);let dataset=t.dataset_path.clone().ok_or("Aucun benchmark de test.")?;let report=t.report_path.clone().ok_or("Lancez d'abord le test.")?;let out=s.projects_dir.join(&project_id).join("vision-corrections");if out.exists(){fs::remove_dir_all(&out).map_err(|e|e.to_string())?;}
+    let args=vec!["--dataset".into(),dataset,"--report".into(),report,"--output".into(),out.to_string_lossy().into_owned()];let r=run_python(&app,"vision_make_corrections.py",&args).await.map_err(|e|e.to_string())?;if !r.status.success(){return Err(String::from_utf8_lossy(&r.stderr).trim().to_string());}
+    let manifest:serde_json::Value=serde_json::from_str(String::from_utf8_lossy(&r.stdout).lines().filter(|x|x.contains("VISION_CORRECTIONS_OK")).last().unwrap_or("{}").trim_start_matches("VISION_CORRECTIONS_OK ")).map_err(|e|format!("Manifest corrections invalide : {e}"))?;let mut tt=t;tt.correction_path=Some(out.to_string_lossy().into_owned());tt.status=format!("{} images proposées pour correction",manifest.get("images").and_then(|x|x.as_u64()).unwrap_or(0));save_vision_test_info(&s.projects_dir,&tt).map_err(|e|e.to_string())?;Ok(tt)
+}
+
 #[tauri::command]
 async fn start_vision_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<(),String>{
     if *s.training_running.lock().await{return Err("Un entraînement est déjà en cours.".into());}
@@ -1237,7 +1288,7 @@ fn run()->Result<()>{
         list_models,current_model,current_adapter,hardware_info,import_model,remove_model,set_model,set_active_adapter,stop_engine,
         import_document,list_documents,remove_document,search_documents,chat,
         list_projects,create_project,import_project_dataset,model_advisor,model_inspection,
-        start_training,stop_training,evaluate_project,generate_corrections,merge_project_model,export_project,activate_project_adapter,hf_runtime_info,vision_info,import_vision_dataset,start_vision_training,evaluate_vision_project,predict_vision_image,vision_runtime_info
+        start_training,stop_training,evaluate_project,generate_corrections,merge_project_model,export_project,activate_project_adapter,hf_runtime_info,vision_info,import_vision_dataset,start_vision_training,evaluate_vision_project,predict_vision_image,vision_runtime_info,vision_test_info,import_vision_test_dataset,run_vision_test,make_vision_corrections
       ])
       .run(tauri::generate_context!()).map_err(|e|anyhow!(e.to_string()))?;
     Ok(())
