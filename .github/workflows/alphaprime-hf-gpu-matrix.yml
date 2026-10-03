@@ -1,0 +1,53 @@
+name: Alpha Prime — Hugging Face GPU Reality Matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gpu:
+    name: HF GPU / ${{ matrix.flavor }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - t4-small
+          - t4-medium
+          - l4x1
+          - l4x4
+          - l40sx1
+          - l40sx4
+          - l40sx8
+          - a10g-small
+          - a10g-large
+          - a10g-largex2
+          - a10g-largex4
+          - a100-large
+          - a100x4
+          - a100x8
+          - h200
+          - h200x2
+          - h200x4
+          - h200x8
+          - rtx-pro-6000
+          - rtx-pro-6000x2
+          - rtx-pro-6000x4
+          - rtx-pro-6000x8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Hugging Face CLI
+        run: python -m pip install -U huggingface_hub
+      - name: Require Hugging Face token
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: test -n "$HF_TOKEN"
+      - name: Execute real GPU probe on Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: hf jobs uv run --name "alphaprime-${{ matrix.flavor }}" --flavor "${{ matrix.flavor }}" --timeout 10m --secrets HF_TOKEN https://raw.githubusercontent.com/belingamougoualexis-ctrl/Vanelle-os-/main/alphaprime_release/hf_gpu_probe.py
