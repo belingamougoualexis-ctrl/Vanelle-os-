@@ -31,6 +31,7 @@ function App(){
   const [projectName,setProjectName]=useState(""),[objective,setObjective]=useState(""),[tests,setTests]=useState([]);
   const [dataset,setDataset]=useState(null),[advisor,setAdvisor]=useState(null),[inspection,setInspection]=useState(null);
   const [evalReport,setEvalReport]=useState(null),[trainingLog,setTrainingLog]=useState([]),[training,setTraining]=useState(false);
+  const [hfRuntime,setHfRuntime]=useState(null);
 
   const active=useMemo(()=>sessions.find(x=>x.id===activeId)||sessions[0],[sessions,activeId]);
   const project=useMemo(()=>projects.find(p=>p.id===project_id)||null,[projects,project_id]);
@@ -53,7 +54,7 @@ function App(){
       setModels(m);setModel(cur||model);setDocs(ds);setHardware(hw);setProjects(ps);
       const selected=ps.find(p=>p.id===project_id)||ps[0];
       if(selected&&!project_id){setProjectId(selected.id);setObjective(selected.objective);setProjectName(selected.name);setTests(defaultTests(selected.objective));}
-      setStatus(cur?"Moteur local prêt":"Importez un modèle GGUF pour commencer");
+      setStatus(cur?"Moteur local prêt":"Importez un modèle compatible pour commencer");
     }catch(e){setStatus(String(e))}
   }
   useEffect(()=>{refresh()},[]);
@@ -89,8 +90,18 @@ function App(){
   async function importModel(){
     const p=await open({multiple:false,filters:[{name:"Modèle GGUF",extensions:["gguf"]}]});
     if(typeof p!=="string")return;
-    try{const m=await invoke("import_model",{path:p});await invoke("set_model",{id:m.id});await refresh();setTab("models");setStatus("Modèle importé et chargé")}
+    try{const m=await invoke("import_model",{path:p});await invoke("set_model",{id:m.id});await refresh();setTab("models");setStatus("Modèle GGUF importé et chargé")}
     catch(e){setStatus(String(e))}
+  }
+  async function importTransformers(){
+    const p=await open({directory:true,multiple:false,title:"Choisir le dossier du modèle Transformers"});
+    if(typeof p!=="string")return;
+    try{const m=await invoke("import_model",{path:p});await invoke("set_model",{id:m.id});await refresh();setTab("models");setStatus("Modèle Transformers importé")}
+    catch(e){setStatus(String(e))}
+  }
+  async function checkHfRuntime(){
+    try{setHfRuntime(await invoke("hf_runtime_info"));setStatus("Vérification du moteur Transformers terminée")}
+    catch(e){setHfRuntime({ready:false,detail:String(e)});setStatus(String(e))}
   }
   async function chooseModel(id){
     try{await invoke("set_model",{id});setModel(id);persist({...load(),model:id});setStatus("Modèle actif · "+id)}catch(e){setStatus(String(e))}
@@ -160,7 +171,7 @@ function App(){
   }
   async function send(){
     const text=input.trim();if(!text||busy)return;
-    if(!model){setStatus("Importez d'abord un modèle GGUF");return}
+    if(!model){setStatus("Importez d'abord un modèle compatible");return}
     let context="";
     try{const f=await invoke("search_documents",{query:text,limit:4});context=f.map(x=>"["+x.name+"]\n"+x.snippet).join("\n\n")}catch{}
     const sys=[settings.system_prompt,memory.length?"Mémoire locale :\n"+memory.map(x=>"- "+x).join("\n"):"",context?"Sources locales pertinentes :\n"+context:""].filter(Boolean).join("\n\n");
@@ -223,20 +234,20 @@ function App(){
           <div className="panel-head"><div><span className="section-kicker">PROJECT MANAGER</span><h3>Nouveau projet IA</h3></div></div>
           <label>Nom<input value={projectName} onChange={e=>setProjectName(e.target.value)} placeholder="Ex. Assistant support entreprise"/></label>
           <label>Objectif<textarea value={objective} onChange={e=>setObjective(e.target.value)} placeholder="Décrivez précisément ce que l'IA doit savoir faire…"/></label>
-          <label>Modèle de base<select value={model} onChange={e=>chooseModel(e.target.value)}><option value="">Sélectionner…</option>{models.map(m=><option key={m.id} value={m.id}>{m.id} · {(m.size_bytes/1073741824).toFixed(2)} Go</option>)}</select></label>
+          <label>Modèle de base<select value={model} onChange={e=>chooseModel(e.target.value)}><option value="">Sélectionner…</option>{models.map(m=><option key={m.id} value={m.id}>{m.id} · {m.format} · {(m.size_bytes/1073741824).toFixed(2)} Go</option>)}</select></label>
           <button className="primary-btn" onClick={createProject}>Créer le projet</button>
         </div>
         <div className="panel">
           <div className="panel-head"><div><span className="section-kicker">PROJECTS</span><h3>Vos projets locaux</h3></div></div>
           <div className="project-list">{projects.map(p=><button key={p.id} className={p.id===project_id?"project-card selected":"project-card"} onClick={()=>selectProject(p.id)}><div><b>{p.name}</b><span>{p.objective}</span></div><em>{p.status}</em></button>)}{!projects.length&&<div className="empty-note">Aucun projet. Créez le premier à gauche.</div>}</div>
-          {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">PROJET SÉLECTIONNÉ</span><h3>{project.name}</h3></div><button onClick={exportProject}>Exporter le projet</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span></div></div>}
+          {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">PROJET SÉLECTIONNÉ</span><h3>{project.name}</h3></div><button onClick={exportProject}>Exporter le projet</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span><span>{models.find(m=>m.id===project.model_id)?.format||"—"}</span></div></div>}
         </div>
       </section>}
 
       {tab==="models"&&<section className="page">
-        <div className="section-head"><div><span className="section-kicker">MODEL REGISTRY</span><h3>Modèles locaux</h3><p>Vanelle travaille sur les modèles GGUF réellement présents sur la machine.</p></div><button className="primary-btn" onClick={importModel}>Importer un GGUF</button></div>
-        <div className="model-grid">{models.map(m=><div className={m.id===model?"model-card active":"model-card"} key={m.id}><div className="model-top"><span className="model-kind">GGUF</span><b>{m.id}</b></div><div className="model-size-big">{(m.size_bytes/1073741824).toFixed(2)} Go</div><div className="model-actions"><button onClick={()=>chooseModel(m.id)}>{m.id===model?"Actif":"Utiliser"}</button><button onClick={()=>inspect(m.id)}>Inspecter</button></div></div>)}{!models.length&&<div className="empty-state"><b>Aucun modèle</b><span>Importez un fichier GGUF existant.</span></div>}</div>
-        {inspection&&<div className="inspection"><div><b>Inspection réelle</b><span>{inspection.id} · {inspection.family}</span></div><div><small>Type</small><b>{inspection.model_ftype||"non exposé"}</b></div><div><small>Vision</small><b>{inspection.modalities?.vision?"Oui":"Non"}</b></div><div><small>Chat template</small><b>{inspection.chat_template?"Détecté":"Non exposé"}</b></div></div>}
+        <div className="section-head"><div><span className="section-kicker">UNIVERSAL MODEL REGISTRY</span><h3>Modèles locaux</h3><p>GGUF via llama.cpp et modèles Transformers avec poids accessibles localement.</p></div><div className="inline-actions"><button onClick={importModel}>Importer un GGUF</button><button className="primary-btn" onClick={importTransformers}>Importer un dossier Transformers</button></div></div>
+        <div className="model-grid">{models.map(m=><div className={m.id===model?"model-card active":"model-card"} key={m.id}><div className="model-top"><span className="model-kind">{m.format==="gguf"?"GGUF":"TRANSFORMERS"}</span><b>{m.id}</b></div><div className="model-size-big">{(m.size_bytes/1073741824).toFixed(2)} Go</div><div className="model-meta"><span>{m.family||"Architecture inconnue"}</span><span>{m.backend||"—"}</span></div><div className="model-actions"><button onClick={()=>chooseModel(m.id)}>{m.id===model?"Actif":"Utiliser"}</button><button onClick={()=>inspect(m.id)}>Inspecter</button></div></div>)}{!models.length&&<div className="empty-state"><b>Aucun modèle</b><span>Importez un GGUF ou un dossier Transformers complet.</span></div>}</div>
+        {inspection&&<div className="inspection"><div><b>Inspection réelle</b><span>{inspection.id} · {inspection.family}</span></div><div><small>Format</small><b>{inspection.format||"—"}</b></div><div><small>Backend</small><b>{inspection.backend||"—"}</b></div><div><small>Architecture</small><b>{inspection.architecture||inspection.model_type||"—"}</b></div><div><small>Chat template</small><b>{inspection.chat_template?"Détecté":"Non exposé"}</b></div></div>}
       </section>}
 
       {tab==="data"&&<section className="page two-col">
@@ -249,14 +260,15 @@ function App(){
           <div className="doc-list">{docs.map(d=><div className="doc-card" key={d.name}><div><b>{d.name}</b><span>{(d.size_bytes/1024).toFixed(1)} Ko</span></div><button onClick={()=>removeDocument(d.name)}>Supprimer</button></div>)}</div>
         </div>
         <div className="panel full-span">
-          <div className="panel-head"><div><span className="section-kicker">MODEL ADVISOR</span><h3>Comment Vanelle choisit la stratégie</h3></div><button className="primary-btn" onClick={runAdvisor} disabled={!project}>Analyser</button></div>
-          {!advisor?<div className="advisor-placeholder">L'analyse utilise le modèle réellement importé, sa taille, l'objectif et les capacités matérielles détectées.</div>:<div className="advisor"><div className="advisor-main"><span>{advisor.detected_family}</span><b>{advisor.training_mode}</b><p>{advisor.reasons.join(" ")}</p></div><div className="advisor-grid"><div><small>Contexte</small><b>{advisor.context}</b></div><div><small>Batch</small><b>{advisor.batch}</b></div><div><small>Rank</small><b>{advisor.rank}</b></div><div><small>Modules</small><b>{advisor.modules}</b></div></div>{advisor.warnings.map((w,i)=><div className="warning" key={i}>{w}</div>)}</div>}
+          <div className="panel-head"><div><span className="section-kicker">MODEL ADVISOR</span><h3>Comment Vanelle choisit la stratégie</h3></div><div className="inline-actions"><button onClick={checkHfRuntime}>Vérifier le moteur Transformers</button><button className="primary-btn" onClick={runAdvisor} disabled={!project}>Analyser</button></div></div>
+          {hfRuntime&&<div className={hfRuntime.ready?"runtime-box ready":"runtime-box"}><b>Transformers runtime</b><span>{hfRuntime.ready?"Disponible":"Non prêt"}</span><small>{hfRuntime.detail||"—"}</small></div>}
+          {!advisor?<div className="advisor-placeholder">L'analyse utilise le format réel du modèle, sa taille, l'objectif et les capacités matérielles détectées.</div>:<div className="advisor"><div className="advisor-main"><span>{advisor.detected_family}</span><b>{advisor.training_mode}</b><p>{advisor.reasons.join(" ")}</p></div><div className="advisor-grid"><div><small>Contexte</small><b>{advisor.context}</b></div><div><small>Batch</small><b>{advisor.batch}</b></div><div><small>Rank</small><b>{advisor.rank}</b></div><div><small>Modules</small><b>{advisor.modules}</b></div></div>{advisor.warnings.map((w,i)=><div className="warning" key={i}>{w}</div>)}</div>}
         </div>
       </section>}
 
       {tab==="training"&&<section className="page">
-        <div className="section-head"><div><span className="section-kicker">TRAINING LAB</span><h3>Entraînement local réel</h3><p>LoRA/SFT avec suivi du processus, checkpoints et adaptateur GGUF exportable.</p></div><div className="inline-actions">{training&&<button onClick={stopTraining}>Arrêter</button>}<button className="primary-btn" onClick={startTraining} disabled={!project||!project.dataset_path||training}>{training?"En cours…":"Lancer l'entraînement"}</button></div></div>
-        <div className="training-summary"><div><small>Projet</small><b>{project?.name||"—"}</b></div><div><small>Modèle</small><b>{project?.model_id||"—"}</b></div><div><small>Dataset</small><b>{project?.examples||0}</b></div><div><small>GPU</small><b>{hardware?.vulkan||"—"}</b></div></div>
+        <div className="section-head"><div><span className="section-kicker">TRAINING LAB</span><h3>Entraînement local réel</h3><p>{project?.model_id&&models.find(m=>m.id===project.model_id)?.format==="transformers"?"LoRA réel via Transformers + PEFT, checkpoints et adaptateur portable.":"LoRA/SFT réel via llama.cpp, avec checkpoints et adaptateur GGUF exportable."}</p></div><div className="inline-actions">{training&&<button onClick={stopTraining}>Arrêter</button>}<button className="primary-btn" onClick={startTraining} disabled={!project||!project.dataset_path||training}>{training?"En cours…":"Lancer l'entraînement"}</button></div></div>
+        <div className="training-summary"><div><small>Projet</small><b>{project?.name||"—"}</b></div><div><small>Modèle</small><b>{project?.model_id||"—"}</b><small>{models.find(m=>m.id===project?.model_id)?.backend||"—"}</small></div><div><small>Dataset</small><b>{project?.examples||0}</b></div><div><small>GPU</small><b>{hardware?.vulkan||"—"}</b></div></div>
         <div className="terminal"><div className="terminal-head"><span>TRAINING LOG</span><span>{training?"RUNNING":"IDLE"}</span></div><pre>{trainingLog.length?trainingLog.join("\n"):"Les sorties réelles du moteur apparaîtront ici pendant l'entraînement."}</pre></div>
       </section>}
 
@@ -268,7 +280,7 @@ function App(){
 
       {tab==="chat"&&<section className="chat-page">
         <div className="chat-scroll">{active?.messages?.length?active.messages.map((m,i)=><article className={"chat-message "+m.role} key={i}><span>{m.role==="user"?"VOUS":m.role==="assistant"?"VANELLE":"CONTEXTE"}</span><p>{m.content||(busy&&i===active.messages.length-1?"Génération…":"")}</p></article>):<div className="chat-empty"><span>LOCAL CHAT</span><h2>Parlez au modèle actif.</h2><p>Vos conversations restent dans le profil local de Vanelle.</p></div>}</div>
-        <div className="composer"><textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={model?"Écrivez votre message…":"Importez un modèle GGUF…"}/><div><span>{hardware?.gpu||"GPU —"} · {hardware?.ram||"RAM —"}</span><button className="primary-btn" disabled={busy||!input.trim()} onClick={send}>Envoyer</button></div></div>
+        <div className="composer"><textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={model?"Écrivez votre message…":"Importez un modèle compatible…"}/><div><span>{hardware?.gpu||"GPU —"} · {hardware?.ram||"RAM —"}</span><button className="primary-btn" disabled={busy||!input.trim()} onClick={send}>Envoyer</button></div></div>
       </section>}
 
       {tab==="settings"&&null}
