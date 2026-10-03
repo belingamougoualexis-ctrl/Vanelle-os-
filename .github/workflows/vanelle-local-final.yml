@@ -3,7 +3,7 @@ name: Vanelle Local Windows Release
 on:
   workflow_dispatch:
   push:
-    branches: [vanelle-local-final]
+    branches: [vanelle-ai-training]
 
 permissions:
   contents: write
@@ -36,6 +36,15 @@ jobs:
         shell: pwsh
         run: ./scripts/build-vanelle.ps1
 
+      - name: Verify universal training resources
+        shell: pwsh
+        run: |
+          if (!(Test-Path "out/src-tauri/universal_engine/hf_train.py")) { throw "hf_train.py non présent dans les ressources embarquées" }
+          if (!(Test-Path "out/src-tauri/universal_engine/hf_eval.py")) { throw "hf_eval.py non présent dans les ressources embarquées" }
+          if (!(Test-Path "out/src-tauri/universal_engine/hf_chat.py")) { throw "hf_chat.py non présent dans les ressources embarquées" }
+          if (!(Test-Path "out/src-tauri/universal_engine/model_manifest.py")) { throw "model_manifest.py non présent dans les ressources embarquées" }
+          Get-ChildItem "out/src-tauri/universal_engine" | Select-Object Name,Length
+
       - name: Verify build files
         shell: pwsh
         run: |
@@ -57,6 +66,12 @@ jobs:
           $exe | Select-Object FullName,Length
           $cpu | Select-Object FullName,Length
           $vk | Select-Object FullName,Length
+
+      - name: Universal source validation
+        shell: pwsh
+        run: |
+          python --version
+          python -m compileall -q out/src-tauri/universal_engine
 
       - name: Engine smoke test with real GGUF conversation
         shell: pwsh
