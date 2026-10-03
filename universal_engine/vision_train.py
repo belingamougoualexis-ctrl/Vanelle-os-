@@ -49,7 +49,7 @@ def main():
     val_tf=transforms.Compose([
         transforms.Resize((args.image_size,args.image_size)),
         transforms.ToTensor(),
-        transforms.Normalize(weights.meta["mean"],weights.meta["std"])
+        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
     ])
 
     base=datasets.ImageFolder(root, transform=train_tf)
@@ -89,7 +89,7 @@ def main():
         if val_acc>best_acc:
             best_acc=val_acc
             torch.save({"state_dict":model.state_dict(),"classes":classes,"image_size":args.image_size,
-                        "mean":list(weights.meta["mean"]),"std":list(weights.meta["std"]),
+                        "mean":list([0.485,0.456,0.406]),"std":list([0.229,0.224,0.225]),
                         "architecture":"mobilenet_v3_small","num_classes":len(classes)},out/"best.pt")
     summary={"format":"vision-classifier","architecture":"mobilenet_v3_small","classes":classes,
              "num_classes":len(classes),"images":len(base),"train_images":train_n,"val_images":val_n,
