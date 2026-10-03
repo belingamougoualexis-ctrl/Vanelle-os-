@@ -89,7 +89,7 @@ struct VisionInfo {
     status: String,
 }
 
-fn vision_file(dir:&Path,id:&str)->PathBuf{dir.join(format!("{id}-vision.json"))}
+fn vision_file(dir:&Path,id:&str)->PathBuf{dir.join(id).join("vision.json")}
 fn load_vision_info(dir:&Path,id:&str)->VisionInfo{
     fs::read_to_string(vision_file(dir,id)).ok()
         .and_then(|s|serde_json::from_str(&s).ok())
