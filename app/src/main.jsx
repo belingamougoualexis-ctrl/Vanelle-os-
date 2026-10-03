@@ -27,22 +27,22 @@ function App(){
   const [input,setInput]=useState(""),[busy,setBusy]=useState(false),[status,setStatus]=useState("Initialisation…");
   const [hardware,setHardware]=useState(null),[settings,setSettings]=useState({...defaults,...(st.settings||{})});
   const [docs,setDocs]=useState([]),[memory,setMemory]=useState(st.memory||[]),[search,setSearch]=useState("");
-  const [projects,setProjects]=useState([]),[projectId,setProjectId]=useState(st.projectId||"");
+  const [projects,setProjects]=useState([]),[project_id,setProjectId]=useState(st.project_id||"");
   const [projectName,setProjectName]=useState(""),[objective,setObjective]=useState(""),[tests,setTests]=useState([]);
   const [dataset,setDataset]=useState(null),[advisor,setAdvisor]=useState(null),[inspection,setInspection]=useState(null);
   const [evalReport,setEvalReport]=useState(null),[trainingLog,setTrainingLog]=useState([]),[training,setTraining]=useState(false);
 
   const active=useMemo(()=>sessions.find(x=>x.id===activeId)||sessions[0],[sessions,activeId]);
-  const project=useMemo(()=>projects.find(p=>p.id===projectId)||null,[projects,projectId]);
+  const project=useMemo(()=>projects.find(p=>p.id===project_id)||null,[projects,project_id]);
   const activeModel=models.find(m=>m.id===model);
 
   const saveState=(patch={})=>{
-    const next={model,sessions,activeId,settings,docs,memory,projectId,...patch};
+    const next={model,sessions,activeId,settings,docs,memory,project_id,...patch};
     persist(next);
     if(patch.sessions)setSessions(patch.sessions);
     if(patch.settings)setSettings(patch.settings);
     if(patch.memory)setMemory(patch.memory);
-    if(patch.projectId)setProjectId(patch.projectId);
+    if(patch.project_id)setProjectId(patch.project_id);
   };
 
   async function refresh(){
@@ -51,8 +51,8 @@ function App(){
         invoke("list_models"),invoke("current_model"),invoke("list_documents"),invoke("hardware_info"),invoke("list_projects")
       ]);
       setModels(m);setModel(cur||model);setDocs(ds);setHardware(hw);setProjects(ps);
-      const selected=ps.find(p=>p.id===projectId)||ps[0];
-      if(selected&&!projectId){setProjectId(selected.id);setObjective(selected.objective);setProjectName(selected.name);setTests(defaultTests(selected.objective));}
+      const selected=ps.find(p=>p.id===project_id)||ps[0];
+      if(selected&&!project_id){setProjectId(selected.id);setObjective(selected.objective);setProjectName(selected.name);setTests(defaultTests(selected.objective));}
       setStatus(cur?"Moteur local prêt":"Importez un modèle GGUF pour commencer");
     }catch(e){setStatus(String(e))}
   }
@@ -69,21 +69,21 @@ function App(){
       });
       const b=listen("training://log",e=>{
         const p=e.payload||{};
-        if(p.project_id===projectId)setTrainingLog(x=>[...x,String(p.line||"")].slice(-240));
+        if(p.project_id===project_id)setTrainingLog(x=>[...x,String(p.line||"")].slice(-240));
       });
       const c=listen("training://done",e=>{
-        const p=e.payload||{};if(p.project_id===projectId){setTraining(false);setStatus(p.code===0?"Entraînement terminé":"Entraînement échoué");loadProjects();}
+        const p=e.payload||{};if(p.project_id===project_id){setTraining(false);setStatus(p.code===0?"Entraînement terminé":"Entraînement échoué");loadProjects();}
       });
       off=()=>{a.then(f=>f());b.then(f=>f());c.then(f=>f())};
     });
     return()=>off?.();
-  },[activeId,projectId]);
+  },[activeId,project_id]);
   async function loadProjects(){try{setProjects(await invoke("list_projects"))}catch{}}
 
   function selectProject(id){
     const p=projects.find(x=>x.id===id);if(!p)return;
     setProjectId(id);setProjectName(p.name);setObjective(p.objective);setDataset(p.dataset_path?{path:p.dataset_path,examples:p.examples}:null);setTests(defaultTests(p.objective));setAdvisor(null);setEvalReport(null);setTrainingLog([]);
-    persist({model,sessions,activeId,settings,docs,memory,projectId:id});
+    persist({model,sessions,activeId,settings,docs,memory,project_id:id});
   }
 
   async function importModel(){
@@ -97,14 +97,14 @@ function App(){
   }
   async function inspect(id=project?.model_id||model){
     if(!id)return;
-    try{setInspection(await invoke("model_inspection",{modelId:id}));setStatus("Inspection réelle terminée")}catch(e){setStatus(String(e))}
+    try{setInspection(await invoke("model_inspection",{model_id:id}));setStatus("Inspection réelle terminée")}catch(e){setStatus(String(e))}
   }
 
   async function createProject(){
     if(!projectName.trim()||!objective.trim()){setStatus("Nom et objectif obligatoires");return}
     if(!model){setStatus("Sélectionnez d'abord un modèle de base");return}
     try{
-      const p=await invoke("create_project",{name:projectName.trim(),objective:objective.trim(),modelId:model});
+      const p=await invoke("create_project",{name:projectName.trim(),objective:objective.trim(),model_id:model});
       await loadProjects();selectProject(p.id);setTab("projects");setStatus("Projet créé");
     }catch(e){setStatus(String(e))}
   }
@@ -113,18 +113,18 @@ function App(){
     if(!project){setStatus("Créez ou sélectionnez un projet");return}
     const p=await open({multiple:false,filters:[{name:"Datasets",extensions:["jsonl","ndjson","json","csv","txt","md","markdown"]}]});
     if(typeof p!=="string")return;
-    try{const d=await invoke("import_project_dataset",{projectId:project.id,path:p});setDataset(d);await loadProjects();setStatus(`Dataset prêt · ${d.examples} exemples`)}catch(e){setStatus(String(e))}
+    try{const d=await invoke("import_project_dataset",{project_id:project.id,path:p});setDataset(d);await loadProjects();setStatus(`Dataset prêt · ${d.examples} exemples`)}catch(e){setStatus(String(e))}
   }
 
   async function runAdvisor(){
     if(!project)return;
-    try{const a=await invoke("model_advisor",{projectId:project.id});setAdvisor(a);setStatus("Stratégie calculée à partir du modèle, des données machine et de l'objectif")}catch(e){setStatus(String(e))}
+    try{const a=await invoke("model_advisor",{project_id:project.id});setAdvisor(a);setStatus("Stratégie calculée à partir du modèle, des données machine et de l'objectif")}catch(e){setStatus(String(e))}
   }
 
   async function startTraining(){
     if(!project)return;
     setTrainingLog([]);setTraining(true);setStatus("Entraînement local démarré");
-    try{await invoke("start_training",{projectId:project.id})}catch(e){setTraining(false);setStatus(String(e))}
+    try{await invoke("start_training",{project_id:project.id})}catch(e){setTraining(false);setStatus(String(e))}
   }
   async function stopTraining(){try{await invoke("stop_training");setTraining(false);setStatus("Entraînement arrêté")}catch(e){setStatus(String(e))}}
 
@@ -132,14 +132,14 @@ function App(){
     if(!project)return;
     if(!tests.length)setTests(defaultTests(project.objective));
     setEvalReport(null);setStatus("Tests comportementaux en cours…");
-    try{const r=await invoke("evaluate_project",{projectId:project.id,tests:tests.length?tests:defaultTests(project.objective)});setEvalReport(r);setStatus(`Évaluation terminée · ${r.passed}/${r.passed+r.failed} tests réussis`)}catch(e){setStatus(String(e))}
+    try{const r=await invoke("evaluate_project",{project_id:project.id,tests:tests.length?tests:defaultTests(project.objective)});setEvalReport(r);setStatus(`Évaluation terminée · ${r.passed}/${r.passed+r.failed} tests réussis`)}catch(e){setStatus(String(e))}
   }
 
   async function improve(){
     if(!project||!evalReport?.failed)return;
     try{
       setStatus("Génération locale de corrections…");
-      const r=await invoke("generate_corrections",{projectId:project.id,failures:evalReport.results});
+      const r=await invoke("generate_corrections",{project_id:project.id,failures:evalReport.results});
       setDataset(r);await loadProjects();setStatus(`Dataset enrichi · ${r.examples} exemples`);
     }catch(e){setStatus(String(e))}
   }
@@ -148,7 +148,7 @@ function App(){
     if(!project)return;
     const dest=await saveDialog({defaultPath:`${project.name.replace(/[^a-z0-9-_]+/gi,"_")}-project.zip`,filters:[{name:"Archive ZIP",extensions:["zip"]}]});
     if(typeof dest!=="string")return;
-    try{await invoke("export_project",{projectId:project.id,destination:dest});setStatus("Projet exporté");}catch(e){setStatus(String(e))}
+    try{await invoke("export_project",{project_id:project.id,destination:dest});setStatus("Projet exporté");}catch(e){setStatus(String(e))}
   }
 
   async function addMemory(){const v=prompt("Ajouter une mémoire locale :");if(v?.trim()){const x=[...memory,v.trim()].slice(-100);setMemory(x);saveState({memory:x})}}
@@ -166,10 +166,10 @@ function App(){
     const sys=[settings.system_prompt,memory.length?"Mémoire locale :\n"+memory.map(x=>"- "+x).join("\n"):"",context?"Sources locales pertinentes :\n"+context:""].filter(Boolean).join("\n\n");
     const msg=[...(active?.messages||[]),{role:"user",content:text}];
     const next=sessions.map(s=>s.id===active?.id?{...s,title:s.title==="Nouvelle conversation"?text.slice(0,48):s.title,messages:[...msg,{role:"assistant",content:""}],updated:Date.now()}:s);
-    setSessions(next);setInput("");setBusy(true);persist({model,sessions:next,activeId,settings,docs,memory,projectId});
+    setSessions(next);setInput("");setBusy(true);persist({model,sessions:next,activeId,settings,docs,memory,project_id});
     try{await invoke("chat",{messages:sys?[{role:"system",content:sys},...msg]:msg,config:settings})}catch(e){setStatus(String(e));setBusy(false)}
   }
-  function newChat(){const s=blankChat();const next=[s,...sessions];setSessions(next);setActiveId(s.id);persist({model,sessions:next,activeId:s.id,settings,docs,memory,projectId})}
+  function newChat(){const s=blankChat();const next=[s,...sessions];setSessions(next);setActiveId(s.id);persist({model,sessions:next,activeId:s.id,settings,docs,memory,project_id})}
   function exportChat(){const data=JSON.stringify(active,null,2);const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));a.download="conversation.json";a.click();URL.revokeObjectURL(a.href)}
   const filtered=sessions.filter(s=>!search||s.title.toLowerCase().includes(search.toLowerCase()));
 
@@ -228,7 +228,7 @@ function App(){
         </div>
         <div className="panel">
           <div className="panel-head"><div><span className="section-kicker">PROJECTS</span><h3>Vos projets locaux</h3></div></div>
-          <div className="project-list">{projects.map(p=><button key={p.id} className={p.id===projectId?"project-card selected":"project-card"} onClick={()=>selectProject(p.id)}><div><b>{p.name}</b><span>{p.objective}</span></div><em>{p.status}</em></button>)}{!projects.length&&<div className="empty-note">Aucun projet. Créez le premier à gauche.</div>}</div>
+          <div className="project-list">{projects.map(p=><button key={p.id} className={p.id===project_id?"project-card selected":"project-card"} onClick={()=>selectProject(p.id)}><div><b>{p.name}</b><span>{p.objective}</span></div><em>{p.status}</em></button>)}{!projects.length&&<div className="empty-note">Aucun projet. Créez le premier à gauche.</div>}</div>
           {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">PROJET SÉLECTIONNÉ</span><h3>{project.name}</h3></div><button onClick={exportProject}>Exporter le projet</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span></div></div>}
         </div>
       </section>}
