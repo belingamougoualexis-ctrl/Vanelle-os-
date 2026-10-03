@@ -1,0 +1,128 @@
+name: Vanelle Universal — real Transformers/PEFT validation
+
+on:
+  push:
+    branches: [vanelle-ai-training]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hf-cpu:
+    name: Real Transformers + PEFT CPU training
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install real training stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "torch" "transformers" "datasets" "peft" "accelerate" "safetensors" "huggingface_hub"
+
+      - name: Download real open model and dataset
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          from huggingface_hub import snapshot_download
+          from datasets import load_dataset
+
+          model_dir = Path("ci/model")
+          snapshot_download(
+              repo_id="sshleifer/tiny-gpt2",
+              local_dir=model_dir,
+          )
+
+          stream = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+          out = Path("ci/dataset.jsonl")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          count = 0
+          with out.open("w", encoding="utf-8") as f:
+              for row in stream:
+                  text = str(row.get("text", "")).strip()
+                  if not text:
+                      continue
+                  f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
+                  count += 1
+                  if count >= 12:
+                      break
+          if count < 12:
+              raise SystemExit(f"Dataset réel incomplet: {count} exemples")
+          print(f"REAL_DATASET_OK examples={count}")
+          PY
+
+      - name: Inspect model manifest
+        run: |
+          python universal_engine/model_manifest.py ci/model | tee ci/model-manifest.json
+          python - <<'PY'
+          import json
+          v=json.load(open("ci/model-manifest.json", encoding="utf-8"))
+          assert v["format"] == "transformers"
+          assert v["weight_files"] > 0
+          print("MODEL_MANIFEST_OK")
+          PY
+
+      - name: Run real LoRA training
+        run: |
+          python universal_engine/hf_train.py             --model ci/model             --dataset ci/dataset.jsonl             --output ci/training             --objective "Adapt the model to continue short factual stories from real training text."             --epochs 1             --batch-size 1             --max-length 128             --rank 2             --alpha 4             --learning-rate 0.00002
+
+      - name: Run real generation evaluation
+        shell: bash
+        run: |
+          cat > ci/tests.json <<'JSON'
+          [
+            {
+              "name": "Generation non vide",
+              "prompt": "Once upon a time",
+              "must_contain": [],
+              "must_not_contain": [],
+              "min_chars": 1,
+              "max_chars": 1000
+            },
+            {
+              "name": "Second generation",
+              "prompt": "The little village",
+              "must_contain": [],
+              "must_not_contain": [],
+              "min_chars": 1,
+              "max_chars": 1000
+            }
+          ]
+          JSON
+
+          python universal_engine/hf_eval.py             --model ci/model             --adapter ci/training/adapter             --tests ci/tests.json             --output ci/evaluation.json             --max-new-tokens 32
+
+          python - <<'PY'
+          import json
+          v=json.load(open("ci/evaluation.json", encoding="utf-8"))
+          assert len(v["results"]) == 2
+          assert v["average_score"] >= 50
+          print("REAL_EVALUATION_OK")
+          PY
+
+      - name: Run real post-training local chat
+        run: |
+          cat > ci/messages.json <<'JSON'
+          [
+            {"role":"user","content":"Once upon a time"}
+          ]
+          JSON
+          python universal_engine/hf_chat.py             --model ci/model             --adapter ci/training/adapter             --messages ci/messages.json             --max-new-tokens 32 | tee ci/chat.txt
+          test -s ci/chat.txt
+          echo REAL_CHAT_OK
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vanelle-universal-real-validation
+          path: |
+            ci/model-manifest.json
+            ci/training/training_summary.json
+            ci/evaluation.json
+            ci/chat.txt
