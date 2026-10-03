@@ -6,7 +6,7 @@ on:
     branches: [vanelle-local-final]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -114,11 +114,36 @@ jobs:
             Write-Host "APP_CHAT_OK: $text"
           } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Prepare stable Windows download files
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "release-assets"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          $setup = Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter *.exe -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (!$setup) { throw "Installateur NSIS introuvable" }
+          Copy-Item $setup.FullName (Join-Path $releaseDir "Vanelle-Local-Windows-x64-Setup.exe") -Force
+          $portable = Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe" -File | Select-Object -First 1
+          if (!$portable) { throw "Executable portable Vanelle introuvable" }
+          Copy-Item $portable.FullName (Join-Path $releaseDir "Vanelle-Local-Windows-x64-Portable.exe") -Force
+          Compress-Archive -Path (Join-Path $releaseDir "*") -DestinationPath (Join-Path $releaseDir "Vanelle-Local-Windows-x64.zip") -Force
+          Get-ChildItem $releaseDir | Select-Object Name,Length
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
         with:
           name: Vanelle-Local-Windows-x64
-          path: |
-            out/src-tauri/target/x86_64-pc-windows-msvc/release/*.exe
-            out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          path: release-assets/*
           if-no-files-found: error
+
+      - name: Publish stable public GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "vanelle-local-latest"
+          $setup = Join-Path $env:GITHUB_WORKSPACE "release-assets\Vanelle-Local-Windows-x64-Setup.exe"
+          $portable = Join-Path $env:GITHUB_WORKSPACE "release-assets\Vanelle-Local-Windows-x64-Portable.exe"
+          $zip = Join-Path $env:GITHUB_WORKSPACE "release-assets\Vanelle-Local-Windows-x64.zip"
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          gh release create $tag $setup $portable $zip --target $env:GITHUB_SHA --title "Vanelle Local Windows x64" --notes "Version Windows x64 validée par compilation, test du moteur GGUF et test de lancement de Vanelle." --latest=false
+          Write-Host "Stable setup URL: https://github.com/belingamougoualexis-ctrl/Vanelle-os-/releases/download/$tag/Vanelle-Local-Windows-x64-Setup.exe"
