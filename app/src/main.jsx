@@ -93,10 +93,11 @@ function App(){
   },[activeId,project_id]);
   async function loadProjects(){try{setProjects(await invoke("list_projects"))}catch{}}
 
-  function selectProject(id){
+  async function selectProject(id){
     const p=projects.find(x=>x.id===id);if(!p)return;
     setProjectId(id);setProjectName(p.name);setObjective(p.objective);setDataset(p.dataset_path?{path:p.dataset_path,examples:p.examples}:null);setTests(defaultTests(p.objective));setAdvisor(null);setEvalReport(null);setTrainingLog([]);
     persist({model,sessions,activeId,settings,docs,memory,project_id:id});
+    try{await invoke("activate_project_adapter",{project_id:id});setStatus(p.adapter_path?"Adaptateur du projet activé":"Modèle de base activé");}catch(e){setStatus(String(e))}
   }
 
   async function importModel(){
@@ -163,7 +164,16 @@ function App(){
     try{
       setStatus("Génération locale de corrections…");
       const r=await invoke("generate_corrections",{project_id:project.id,failures:evalReport.results});
-      setDataset(r);await loadProjects();setStatus(`Dataset enrichi · ${r.examples} exemples`);
+      setDataset(r);await loadProjects();setStatus(`Dataset enrichi · ${r.examples} exemples — relancez le training`);
+    }catch(e){setStatus(String(e))}
+  }
+  async function mergeFinal(){
+    if(!project?.adapter_path)return;
+    try{
+      setStatus("Génération du modèle final…");
+      const path=await invoke("merge_project_model",{project_id:project.id});
+      await loadProjects();
+      setStatus("Modèle final généré · "+path);
     }catch(e){setStatus(String(e))}
   }
 
@@ -233,7 +243,7 @@ function App(){
         </div>
         <div className="stat-grid">
           <div className="stat"><span>MATÉRIEL</span><b>{hardware?.cpu||"—"}</b><small>{hardware?.gpu||"GPU —"} · {hardware?.ram||"RAM —"}</small></div>
-          <div className="stat"><span>MOTEUR</span><b>{activeModel?.id||"Aucun modèle"}</b><small>{hardware?.vulkan||"Vulkan —"}</small></div>
+          <div className="stat"><span>MOTEUR</span><b>{activeModel?.id||"Aucun modèle"}</b><small>{activeModel?.backend||hardware?.vulkan||"—"}</small></div>
           <div className="stat"><span>PROJET ACTIF</span><b>{project?.name||"Aucun"}</b><small>{project?.status||"Créez un projet"}</small></div>
           <div className="stat"><span>DATASET</span><b>{dataset?.examples||project?.examples||0}</b><small>exemples préparés localement</small></div>
         </div>
@@ -252,7 +262,7 @@ function App(){
         <div className="panel">
           <div className="panel-head"><div><span className="section-kicker">PROJECTS</span><h3>Vos projets locaux</h3></div></div>
           <div className="project-list">{projects.map(p=><button key={p.id} className={p.id===project_id?"project-card selected":"project-card"} onClick={()=>selectProject(p.id)}><div><b>{p.name}</b><span>{p.objective}</span></div><em>{p.status}</em></button>)}{!projects.length&&<div className="empty-note">Aucun projet. Créez le premier à gauche.</div>}</div>
-          {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">PROJET SÉLECTIONNÉ</span><h3>{project.name}</h3></div><button onClick={exportProject}>Exporter le projet</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span><span>{models.find(m=>m.id===project.model_id)?.format||"—"}</span></div></div>}
+          {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">PROJET SÉLECTIONNÉ</span><h3>{project.name}</h3></div><button onClick={exportProject}>Exporter le projet</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span><span>{models.find(m=>m.id===project.model_id)?.format||"—"}</span>{project.merged_model_path&&<span>modèle final prêt</span>}</div></div>}
         </div>
       </section>}
 
@@ -279,7 +289,7 @@ function App(){
       </section>}
 
       {tab==="training"&&<section className="page">
-        <div className="section-head"><div><span className="section-kicker">TRAINING LAB</span><h3>Entraînement local réel</h3><p>{project?.model_id&&models.find(m=>m.id===project.model_id)?.format==="transformers"?"LoRA réel via Transformers + PEFT, checkpoints et adaptateur portable.":"LoRA/SFT réel via llama.cpp, avec checkpoints et adaptateur GGUF exportable."}</p></div><div className="inline-actions">{training&&<button onClick={stopTraining}>Arrêter</button>}<button className="primary-btn" onClick={startTraining} disabled={!project||!project.dataset_path||training}>{training?"En cours…":"Lancer l'entraînement"}</button></div></div>
+        <div className="section-head"><div><span className="section-kicker">TRAINING LAB</span><h3>Entraînement local réel</h3><p>{project?.model_id&&models.find(m=>m.id===project.model_id)?.format==="transformers"?"LoRA réel via Transformers + PEFT, checkpoints et adaptateur portable.":"LoRA/SFT réel via llama.cpp, avec checkpoints et adaptateur GGUF exportable."}</p></div><div className="inline-actions">{training&&<button onClick={stopTraining}>Arrêter</button>}{project?.adapter_path&&<button onClick={mergeFinal} disabled={training}>Générer le modèle final</button>}<button className="primary-btn" onClick={startTraining} disabled={!project||!project.dataset_path||training}>{training?"En cours…":"Lancer l'entraînement"}</button></div></div>
         <div className="training-summary"><div><small>Projet</small><b>{project?.name||"—"}</b></div><div><small>Modèle</small><b>{project?.model_id||"—"}</b><small>{models.find(m=>m.id===project?.model_id)?.backend||"—"}</small></div><div><small>Dataset</small><b>{project?.examples||0}</b></div><div><small>GPU</small><b>{hardware?.vulkan||"—"}</b></div></div>
         <div className="terminal"><div className="terminal-head"><span>TRAINING LOG</span><span>{training?"RUNNING":"IDLE"}</span></div><pre>{trainingLog.length?trainingLog.join("\n"):"Les sorties réelles du moteur apparaîtront ici pendant l'entraînement."}</pre></div>
       </section>}
