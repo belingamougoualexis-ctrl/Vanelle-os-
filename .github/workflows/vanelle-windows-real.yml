@@ -27,14 +27,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1
-        with:
-          vulkan_version: 1.4.309.0
-          install_runtime: true
-          install_lavapipe: true
-          cache: true
-          stripdown: true
 
       - name: Build Vanelle
         shell: pwsh
