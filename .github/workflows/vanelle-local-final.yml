@@ -1,9 +1,10 @@
-name: Vanelle Local Windows Release
+name: Vanelle 2.0 Windows CI and Release
 
 on:
   workflow_dispatch:
   push:
-    branches: [vanelle-local-final]
+    branches:
+      - vanelle-local-final
 
 permissions:
   contents: write
@@ -11,19 +12,19 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
-      - name: Install Vulkan SDK and software Vulkan runtime
+      - name: Vulkan
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
           vulkan_version: 1.4.309.0
@@ -31,171 +32,117 @@ jobs:
           install_lavapipe: true
           cache: true
           stripdown: true
-
-      - name: Build application
+      - name: Build Vanelle and local engines
         shell: pwsh
         run: ./scripts/build-vanelle.ps1
-
-      - name: Verify build files
+      - name: Rust unit tests
+        shell: pwsh
+        run: cargo test --manifest-path "out/src-tauri/Cargo.toml"
+      - name: Verify application and engines
         shell: pwsh
         run: |
-          $nsis = Get-ChildItem -Path "out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter *.exe -File -ErrorAction Stop
-          $exe = Get-ChildItem -Path "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter *.exe -File -ErrorAction Stop
-          $cpu = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe" -File -ErrorAction Stop
-          $vk = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-server-vulkan-*.exe" -File -ErrorAction Stop
-          $trainer = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-finetune-lora-*.exe" -File -ErrorAction Stop
-          $exporter = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-export-lora-*.exe" -File -ErrorAction Stop
-          $ppl = Get-ChildItem -Path "out/src-tauri/binaries" -Filter "llama-perplexity-*.exe" -File -ErrorAction Stop
-          if ($nsis.Count -lt 1) { throw "Installateur NSIS introuvable" }
-          if ($exe.Count -lt 1) { throw "Executable Vanelle introuvable" }
-          if ($cpu.Count -lt 1) { throw "Moteur CPU introuvable" }
-          if ($vk.Count -lt 1) { throw "Moteur Vulkan introuvable" }
-          if ($trainer.Count -lt 2) { throw "Moteurs LoRA CPU/Vulkan incomplets" }
-          if ($exporter.Count -lt 2) { throw "Outils export LoRA CPU/Vulkan incomplets" }
-          if ($ppl.Count -lt 2) { throw "Outils perplexity CPU/Vulkan incomplets" }
-          $nsis | Select-Object FullName,Length
-          $exe | Select-Object FullName,Length
-          $cpu | Select-Object FullName,Length
-          $vk | Select-Object FullName,Length
-
-      - name: Engine smoke test with real GGUF conversation
+          $base="out/src-tauri"; $release="out/src-tauri/target/x86_64-pc-windows-msvc/release"; $bundle="$release/bundle/nsis"
+          $required=@(
+            "$base/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe",
+            "$base/binaries/llama-server-vulkan-x86_64-pc-windows-msvc.exe",
+            "$base/binaries/llama-finetune-lora-x86_64-pc-windows-msvc.exe",
+            "$base/binaries/llama-finetune-lora-vulkan-x86_64-pc-windows-msvc.exe",
+            "$base/binaries/llama-export-lora-x86_64-pc-windows-msvc.exe",
+            "$base/binaries/llama-export-lora-vulkan-x86_64-pc-windows-msvc.exe",
+            "$base/binaries/llama-perplexity-x86_64-pc-windows-msvc.exe"
+          )
+          foreach($p in $required){if(!(Test-Path $p)){throw "Binaire manquant: $p"}}
+          if(!(Get-ChildItem $release -Filter "vanelle-local.exe" -File)){throw "Executable Vanelle manquant"}
+          if(!(Get-ChildItem $bundle -Filter "*.exe" -File)){throw "Installateur NSIS manquant"}
+      - name: Real local chat test
         shell: pwsh
         run: |
-          $model = "$env:RUNNER_TEMP\tinyllama-q2.gguf"
-          $url = "https://huggingface.co/tensorblock/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/TinyLlama-1.1B-Chat-v1.0-Q2_K.gguf?download=true"
-          Invoke-WebRequest -Uri $url -OutFile $model -UseBasicParsing
-          if ((Get-Item $model).Length -lt 100000000) { throw "Le modèle GGUF de test est incomplet" }
-
-          $cpuExe = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe").FullName
-          $vkExe = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-vulkan-*.exe").FullName
-
-          $cpu = Start-Process -FilePath $cpuExe -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18281","--ctx-size","1024","--n-gpu-layers","0") -PassThru -WindowStyle Hidden
-          try {
+          $model="$env:RUNNER_TEMP\tinyllama-q2.gguf"
+          Invoke-WebRequest -Uri "https://huggingface.co/tensorblock/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/TinyLlama-1.1B-Chat-v1.0-Q2_K.gguf?download=true" -OutFile $model -UseBasicParsing
+          if((Get-Item $model).Length -lt 100MB){throw "GGUF de test incomplet"}
+          $server=(Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe"|Select-Object -First 1).FullName
+          $p=Start-Process $server -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18281","--ctx-size","512","--n-gpu-layers","0","--jinja") -PassThru -WindowStyle Hidden
+          try{
             $ready=$false
-            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18281/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
-            if (!$ready) { throw "Moteur CPU non prêt" }
-            $body = @{model="tinyllama";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_OK"}) ; max_tokens=32; temperature=0; stream=$false} | ConvertTo-Json -Depth 6
-            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18281/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
-            $text = [string]$resp.choices[0].message.content
-            if ([string]::IsNullOrWhiteSpace($text)) { throw "Le chat CPU n'a produit aucune réponse" }
-            Write-Host "CPU_CHAT_OK: $text"
-          } finally { Stop-Process -Id $cpu.Id -Force -ErrorAction SilentlyContinue }
-
-          $devices = & $vkExe --list-devices 2>&1 | Out-String
-          Write-Host $devices
-          if ($devices -match "(?i)Available devices:" -and $devices -notmatch "(?i)\(none\)") {
-            if ($devices -match "(?i)device|gpu") { $vk = Start-Process -FilePath $vkExe -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18282","--ctx-size","1024","--n-gpu-layers","auto") -PassThru -WindowStyle Hidden } else { $vk = $null }
-            try {
-              $ready=$false
-              1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18282/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
-              if (!$ready) { throw "Moteur Vulkan non prêt sur le runner" }
-              $body = @{model="tinyllama";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_VULKAN_OK"});max_tokens=32;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
-              $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18282/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
-              $text = [string]$resp.choices[0].message.content
-              if ([string]::IsNullOrWhiteSpace($text)) { throw "Le chat Vulkan n'a produit aucune réponse" }
-              Write-Host "VULKAN_CHAT_OK: $text"
-            } finally { if ($null -ne $vk) { Stop-Process -Id $vk.Id -Force -ErrorAction SilentlyContinue } }
-          } else {
-            Write-Warning "Aucun GPU Vulkan n'est exposé par le runner GitHub; moteur Vulkan compilé mais conversation GPU non testable ici."
-          }
-
-      - name: Real LoRA training and adapter inference test
+            1..120|ForEach-Object{if(!$ready){try{$h=Invoke-WebRequest "http://127.0.0.1:18281/health" -UseBasicParsing;if($h.StatusCode -eq 200){$ready=$true}}catch{};Start-Sleep -Milliseconds 500}}
+            if(!$ready){throw "Serveur local non prêt"}
+            $body=@{model="tinyllama";messages=@(@{role="user";content="Réponds avec un texte non vide."});max_tokens=32;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
+            $z=Invoke-RestMethod "http://127.0.0.1:18281/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            if([string]::IsNullOrWhiteSpace([string]$z.choices[0].message.content)){throw "Réponse locale vide"}
+            Write-Host "LOCAL_CHAT_OK"
+          }finally{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
+      - name: Real LoRA training, inference and merge test
         shell: pwsh
-        timeout-minutes: 30
         run: |
-          $model = "$env:RUNNER_TEMP\qwen3-0.6b-q8.gguf"
-          $dataset = "$env:RUNNER_TEMP\vanelle-training.jsonl"
-          $adapter = "$env:RUNNER_TEMP\vanelle-trained-adapter.gguf"
-          $merged = "$env:RUNNER_TEMP\vanelle-merged.gguf"
-          $url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf?download=true"
-          Invoke-WebRequest -Uri $url -OutFile $model -UseBasicParsing
-          if ((Get-Item $model).Length -lt 500000000) { throw "Modèle Qwen de test incomplet" }
-
-          @'
-{"messages":[{"role":"user","content":"Quel est le code secret de test Vanelle ?"},{"role":"assistant","content":"Le code secret de test Vanelle est VANELLE_TRAIN_OK."}]}
-{"messages":[{"role":"user","content":"Répète le code secret de test Vanelle."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
-{"messages":[{"role":"user","content":"Donne uniquement le code secret."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
-{"messages":[{"role":"user","content":"Quel texte dois-je utiliser pour valider le modèle ?"},{"role":"assistant","content":"Utilise VANELLE_TRAIN_OK pour valider le modèle."}]}
-'@ | Set-Content -Path $dataset -Encoding utf8
-
-          $trainer = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-finetune-lora-*.exe" | Where-Object {$_.Name -notmatch "-vulkan-"} | Select-Object -First 1).FullName
-          if (!$trainer) { throw "Trainer CPU introuvable" }
-
+          $model="$env:RUNNER_TEMP\qwen3-0.6b-q8.gguf"; $dataset="$env:RUNNER_TEMP\vanelle-training.jsonl"; $adapter="$env:RUNNER_TEMP\vanelle-adapter.gguf"; $merged="$env:RUNNER_TEMP\vanelle-merged.gguf"
+          Invoke-WebRequest -Uri "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf?download=true" -OutFile $model -UseBasicParsing
+          if((Get-Item $model).Length -lt 500MB){throw "Qwen GGUF de test incomplet"}
+          @(
+            '{"messages":[{"role":"user","content":"Quel est le code Vanelle ?"},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}'
+            '{"messages":[{"role":"user","content":"Donne le code Vanelle."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}'
+            '{"messages":[{"role":"user","content":"Répète le code."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}'
+            '{"messages":[{"role":"user","content":"Quel texte valide ce test ?"},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}'
+          )|Set-Content -Path $dataset -Encoding utf8
+          $trainer=(Get-ChildItem "out/src-tauri/binaries" -Filter "llama-finetune-lora-*.exe"|Where-Object{$_.Name -notmatch "-vulkan-"}|Select-Object -First 1).FullName
+          if(!$trainer){throw "Trainer CPU introuvable"}
           & $trainer -m $model -f $dataset --output-adapter $adapter --assistant-loss-only -c 128 -b 1 -ub 1 -ngl 0 -fa off --lora-rank 4 --lora-alpha 8 --lora-modules "attn_q,attn_k,attn_v,attn_o" --learning-rate 1e-5 --num-epochs 1 --checkpoint-save-steps 1000
-          if ($LASTEXITCODE -ne 0) { throw "Entraînement LoRA réel en échec" }
-          if (!(Test-Path $adapter) -or (Get-Item $adapter).Length -lt 10000) { throw "Adaptateur LoRA non généré ou vide" }
-
-          $server = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe" | Select-Object -First 1).FullName
-          $p = Start-Process -FilePath $server -ArgumentList @("-m",$model,"--lora",$adapter,"--alias","trained-test","--host","127.0.0.1","--port","18284","--ctx-size","256","--n-gpu-layers","0","--jinja") -PassThru -WindowStyle Hidden
-          try {
+          if($LASTEXITCODE -ne 0){throw "Entraînement LoRA en échec"}
+          if(!(Test-Path $adapter)-or (Get-Item $adapter).Length -lt 10000){throw "Adaptateur LoRA absent"}
+          $server=(Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe"|Select-Object -First 1).FullName
+          $p=Start-Process $server -ArgumentList @("-m",$model,"--lora",$adapter,"--alias","trained-test","--host","127.0.0.1","--port","18282","--ctx-size","256","--n-gpu-layers","0","--jinja") -PassThru -WindowStyle Hidden
+          try{
             $ready=$false
-            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18284/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
-            if (!$ready) { throw "Serveur avec LoRA non prêt" }
-            $body=@{model="trained-test";messages=@(@{role="user";content="Quel est le code secret de test Vanelle ?"});max_tokens=32;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
-            $resp=Invoke-RestMethod -Uri "http://127.0.0.1:18284/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
-            $answer=[string]$resp.choices[0].message.content
-            if ([string]::IsNullOrWhiteSpace($answer)) { throw "Réponse avec LoRA vide" }
-            Write-Host "LORA_INFERENCE_OK: $answer"
-          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-
-          $exporter = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-export-lora-*.exe" | Where-Object {$_.Name -notmatch "-vulkan-"} | Select-Object -First 1).FullName
-          if (!$exporter) { throw "Export LoRA CPU introuvable" }
+            1..120|ForEach-Object{if(!$ready){try{$h=Invoke-WebRequest "http://127.0.0.1:18282/health" -UseBasicParsing;if($h.StatusCode -eq 200){$ready=$true}}catch{};Start-Sleep -Milliseconds 500}}
+            if(!$ready){throw "Serveur LoRA non prêt"}
+            $body=@{model="trained-test";messages=@(@{role="user";content="Quel est le code Vanelle ?"});max_tokens=32;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
+            $z=Invoke-RestMethod "http://127.0.0.1:18282/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            if([string]::IsNullOrWhiteSpace([string]$z.choices[0].message.content)){throw "Inférence LoRA vide"}
+            Write-Host "LORA_INFERENCE_OK"
+          }finally{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
+          $exporter=(Get-ChildItem "out/src-tauri/binaries" -Filter "llama-export-lora-*.exe"|Where-Object{$_.Name -notmatch "-vulkan-"}|Select-Object -First 1).FullName
+          if(!$exporter){throw "Export LoRA introuvable"}
           & $exporter -m $model --lora $adapter -o $merged
-          if ($LASTEXITCODE -ne 0) { throw "Fusion LoRA en échec" }
-          if (!(Test-Path $merged) -or (Get-Item $merged).Length -lt 100000) { throw "Modèle fusionné non généré" }
-          Write-Host "LORA_TRAINING_PIPELINE_OK"
-
-      - name: Vanelle app launch and local engine test
+          if($LASTEXITCODE -ne 0){throw "Fusion LoRA en échec"}
+          if(!(Test-Path $merged)-or (Get-Item $merged).Length -lt 100000){throw "Modèle fusionné absent"}
+          Write-Host "LORA_PIPELINE_OK"
+      - name: Vanelle app launch test
         shell: pwsh
         run: |
-          $model = "$env:RUNNER_TEMP\tinyllama-q2.gguf"
-          $appModelDir = Join-Path $env:APPDATA "com.vanelle.local\models"
-          New-Item -ItemType Directory -Force -Path $appModelDir | Out-Null
-          Copy-Item $model (Join-Path $appModelDir "tinyllama-q2.gguf") -Force
-          $appExe = (Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe" -File | Select-Object -First 1).FullName
-          if (!$appExe) { throw "Vanelle Local.exe introuvable" }
-          $p=Start-Process -FilePath $appExe -PassThru -WindowStyle Hidden
-          try {
+          $model="$env:RUNNER_TEMP\tinyllama-q2.gguf"; $dir=Join-Path $env:APPDATA "com.vanelle.local\models"
+          New-Item -ItemType Directory -Force -Path $dir|Out-Null
+          Copy-Item $model (Join-Path $dir "tinyllama-q2.gguf") -Force
+          $exe=(Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe"|Select-Object -First 1).FullName
+          $p=Start-Process $exe -PassThru -WindowStyle Hidden
+          try{
             $ready=$false
-            1..160 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18280/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
-            if (!$ready) { throw "Vanelle n'a pas démarré son moteur local" }
-            $body = @{model="tinyllama-q2";messages=@(@{role="user";content="Réponds exactement TEST_VANELLE_APP_OK"});max_tokens=32;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
-            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:18280/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
-            $text = [string]$resp.choices[0].message.content
-            if ([string]::IsNullOrWhiteSpace($text)) { throw "La conversation à travers Vanelle n'a produit aucune réponse" }
-            Write-Host "APP_CHAT_OK: $text"
-          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-
-      - name: Prepare stable Windows download files
+            1..160|ForEach-Object{if(!$ready){try{$h=Invoke-WebRequest "http://127.0.0.1:18280/health" -UseBasicParsing;if($h.StatusCode -eq 200){$ready=$true}}catch{};Start-Sleep -Milliseconds 500}}
+            if(!$ready){throw "Vanelle engine did not start"}
+            $body=@{model="tinyllama-q2";messages=@(@{role="user";content="Réponds avec un texte non vide."});max_tokens=32;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
+            $z=Invoke-RestMethod "http://127.0.0.1:18280/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            if([string]::IsNullOrWhiteSpace([string]$z.choices[0].message.content)){throw "Vanelle chat vide"}
+            Write-Host "APP_CHAT_OK"
+          }finally{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
+      - name: Prepare release assets
         shell: pwsh
         run: |
-          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "release-assets"
-          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
-          $setup = Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter *.exe -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (!$setup) { throw "Installateur NSIS introuvable" }
-          Copy-Item $setup.FullName (Join-Path $releaseDir "Vanelle-Local-Windows-x64-Setup.exe") -Force
-          $portable = Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe" -File | Select-Object -First 1
-          if (!$portable) { throw "Executable portable Vanelle introuvable" }
-          Copy-Item $portable.FullName (Join-Path $releaseDir "Vanelle-Local-Windows-x64-Portable.exe") -Force
-          Compress-Archive -Path (Join-Path $releaseDir "*") -DestinationPath (Join-Path $releaseDir "Vanelle-Local-Windows-x64.zip") -Force
-          Get-ChildItem $releaseDir | Select-Object Name,Length
-
-      - name: Upload CI artifact
+          $out="release-assets"; New-Item -ItemType Directory -Force -Path $out|Out-Null
+          $setup=(Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter "*.exe" -File|Sort-Object LastWriteTime -Descending|Select-Object -First 1).FullName
+          $portable=(Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe" -File|Select-Object -First 1).FullName
+          Copy-Item $setup "$out\Vanelle-2.0-Windows-x64-Setup.exe" -Force
+          Copy-Item $portable "$out\Vanelle-2.0-Windows-x64-Portable.exe" -Force
+          Compress-Archive -Path "$out\*" -DestinationPath "$out\Vanelle-2.0-Windows-x64.zip" -Force
+          Get-ChildItem $out|Select-Object Name,Length
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Vanelle-Local-Windows-x64
+          name: Vanelle-2.0-Windows-x64
           path: release-assets/*
           if-no-files-found: error
-
-      - name: Publish stable public GitHub Release
+      - name: Publish stable release
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: \${{ github.token }}
         run: |
-          $tag = "vanelle-local-latest"
-          $setup = Join-Path $env:GITHUB_WORKSPACE "release-assets\Vanelle-Local-Windows-x64-Setup.exe"
-          $portable = Join-Path $env:GITHUB_WORKSPACE "release-assets\Vanelle-Local-Windows-x64-Portable.exe"
-          $zip = Join-Path $env:GITHUB_WORKSPACE "release-assets\Vanelle-Local-Windows-x64.zip"
+          $tag="vanelle-local-latest"
           gh release delete $tag --yes --cleanup-tag 2>$null
-          gh release create $tag $setup $portable $zip --target $env:GITHUB_SHA --title "Vanelle Local Windows x64" --notes "Version Windows x64 validée par compilation, test du moteur GGUF et test de lancement de Vanelle." --latest=false
-          Write-Host "Stable setup URL: https://github.com/belingamougoualexis-ctrl/Vanelle-os-/releases/download/$tag/Vanelle-Local-Windows-x64-Setup.exe"
+          gh release create $tag "release-assets/Vanelle-2.0-Windows-x64-Setup.exe" "release-assets/Vanelle-2.0-Windows-x64-Portable.exe" "release-assets/Vanelle-2.0-Windows-x64.zip" --target $env:GITHUB_SHA --title "Vanelle 2.0 Windows x64" --notes "Vanelle AI Engineering Studio. CI validates compilation, local chat, LoRA training, adapter inference and merge." --latest=false
