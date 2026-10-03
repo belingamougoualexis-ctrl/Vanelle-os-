@@ -100,7 +100,7 @@ jobs:
           $appModelDir = Join-Path $env:APPDATA "com.vanelle.local\models"
           New-Item -ItemType Directory -Force -Path $appModelDir | Out-Null
           Copy-Item $model (Join-Path $appModelDir "tinyllama-q2.gguf") -Force
-          $appExe = (Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "Vanelle Local.exe" -File | Select-Object -First 1).FullName
+          $appExe = (Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe" -File | Select-Object -First 1).FullName
           if (!$appExe) { throw "Vanelle Local.exe introuvable" }
           $p=Start-Process -FilePath $appExe -PassThru -WindowStyle Hidden
           try {
