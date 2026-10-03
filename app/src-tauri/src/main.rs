@@ -395,8 +395,8 @@ fn parse_dataset_line(v: &serde_json::Value) -> Option<(Option<String>, Option<S
         for m in arr {
             let role = m.get("role").and_then(|x| x.as_str()).unwrap_or("");
             let c = m.get("content").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
-            if role == "user" && !c.is_empty() && user.is_none() { user = Some(c.clone()); }
-            if role == "assistant" && !c.is_empty() { assistant = Some(c); }
+            if role == "user" && !c.is_empty() && user.is_none() { user = Some(c); }
+            else if role == "assistant" && !c.is_empty() { assistant = Some(c); }
         }
         let text = arr.iter().filter_map(|m| m.get("content").and_then(|x| x.as_str())).collect::<Vec<_>>().join("
 ");
@@ -889,7 +889,7 @@ async fn start_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_i
     if p.examples>0{args.extend(["--lora-seed".into(),"42".into()]);}
     if let Some(dataset_path)=p.dataset_path.clone(){
         if let Ok(text)=fs::read_to_string(dataset_path){
-            if text.lines().take(5).all(|l|l.contains(""messages"")){args.push("--assistant-loss-only".into());}
+            if text.lines().take(5).all(|l|l.contains("\"messages\"")){args.push("--assistant-loss-only".into());}
         }
     }
     if output.exists(){let _=fs::remove_file(&output);}
@@ -1056,7 +1056,7 @@ async fn generate_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,pro
             new_lines.push(serde_json::json!({"messages":[{"role":"user","content":format!("Cas à corriger: {}",f.name)},{"role":"assistant","content":answer}]}));
         }
     }
-    if new_lines.is_empty(){return Err("Aucune correction exploitable n'a été générée.");}
+    if new_lines.is_empty(){return Err("Aucune correction exploitable n'a été générée.".to_string());}
 
     let path=PathBuf::from(dataset);
     let mut file=fs::read_to_string(&path).unwrap_or_default();
