@@ -6,6 +6,12 @@ if (Test-Path $root) { Remove-Item -Recurse -Force $root }
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot "..\app\*") -Destination $root -Recurse -Force
 
+$universalSource = Join-Path $PSScriptRoot "..\universal_engine"
+$universalTarget = Join-Path $root "src-tauri\universal_engine"
+if (!(Test-Path (Join-Path $universalSource "hf_train.py"))) { throw "universal_engine/hf_train.py introuvable" }
+New-Item -ItemType Directory -Force -Path $universalTarget | Out-Null
+Copy-Item -Path (Join-Path $universalSource "*") -Destination $universalTarget -Recurse -Force
+
 New-Item -ItemType Directory -Force -Path "$root\src-tauri\icons","$root\src-tauri\binaries" | Out-Null
 $iconBytes = [Convert]::FromBase64String("AAABAAEAICAAAAEAIAB7AAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAAEJJREFUeNpjUE1+/X8gMcOoAwadA2gNRh0w9ByAK/FQS92oA0YdMPgdMFoOjDpgNBeMOmDUAaPlwMhzwGjPaMQ5AABl0WGVvs64lwAAAABJRU5ErkJggg==")
 [IO.File]::WriteAllBytes("$root\src-tauri\icons\icon.ico", $iconBytes)
