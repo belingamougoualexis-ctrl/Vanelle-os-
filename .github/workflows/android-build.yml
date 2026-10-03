@@ -1,10 +1,7 @@
+# NOTE: Ce workflow historique n'est plus le pipeline Alpha Prime de référence. Le pipeline réel est .github/workflows/alphaprime-real-validation.yml.
 name: Build and Sign Release APK Automatically
 
 on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 permissions:
