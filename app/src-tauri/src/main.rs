@@ -695,7 +695,8 @@ async fn start_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_i
         }
     }
     if output.exists(){let _=fs::remove_file(&output);}
-    let (mut rx,child)=app.shell().sidecar("llama-finetune-lora").map_err(|e|e.to_string())?.args(args).spawn().map_err(|e|e.to_string())?;
+    let trainer = if use_gpu { "llama-finetune-lora-vulkan" } else { "llama-finetune-lora" };
+    let (mut rx,child)=app.shell().sidecar(trainer).map_err(|e|e.to_string())?.args(args).spawn().map_err(|e|e.to_string())?;
     *s.training_child.lock().await=Some(child);
     *s.training_running.lock().await=true;
     p.status="Entraînement en cours".into();p.updated_at=now_iso();save_project(&s.projects_dir,&p).map_err(|e|e.to_string())?;
@@ -807,10 +808,11 @@ async fn generate_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,pro
 }
 
 #[tauri::command]
-async fn export_project(s:State<'_,Arc<AppState>>,project_id:String)->Result<String,String>{
+async fn export_project(s:State<'_,Arc<AppState>>,project_id:String,destination:String)->Result<String,String>{
     let p=load_project(&s.projects_dir,&project_id).map_err(|e|e.to_string())?;
     let src=s.projects_dir.join(&project_id);
-    let zip_path=s.projects_dir.join(format!("{}-project.zip",project_id));
+    let zip_path=PathBuf::from(destination);
+    if let Some(parent)=zip_path.parent(){if !parent.as_os_str().is_empty(){fs::create_dir_all(parent).map_err(|e|e.to_string())?;}}
     let file=fs::File::create(&zip_path).map_err(|e|e.to_string())?;
     let mut z=zip::ZipWriter::new(file);
     let options=zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
