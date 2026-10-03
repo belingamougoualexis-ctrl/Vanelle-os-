@@ -1,30 +1,77 @@
-# Vanelle
+# Vanelle — AI Engineering & Training OS
 
-Vanelle est un studio local d'ingénierie IA pour travailler à partir d'un modèle et de données appartenant à l'utilisateur.
+Vanelle est un studio local-first pour importer, préparer, entraîner, évaluer et exporter des modèles d'IA avec les données et l'objectif de l'utilisateur.
 
-## Fonctionnalités
+## Ce que Vanelle fait réellement
 
-- Chat local avec modèle GGUF et llama.cpp.
-- Import et recherche de documents locaux.
-- Mémoire et conversations locales.
-- Création de projets avec un objectif explicite.
-- Import et normalisation de datasets JSONL, JSON, CSV, TXT et Markdown.
-- Analyse du modèle, des contraintes matérielles et de l'objectif.
-- Entraînement LoRA/SFT local avec checkpoints.
-- Application d'un adaptateur LoRA au modèle pour les tests.
-- Scénarios d'évaluation comportementale.
-- Enrichissement du dataset à partir des échecs détectés.
-- Export d'un projet complet en ZIP.
+- Chat local avec GGUF via llama.cpp.
+- Import de modèles GGUF ou de dossiers Transformers contenant une configuration et des poids accessibles localement.
+- Analyse du modèle : format, famille, architecture, taille et compatibilité du backend.
+- Analyse de l'objectif, du dataset et du matériel afin de choisir une stratégie d'adaptation.
+- Préparation/normalisation de datasets JSONL, JSON, CSV, TXT et Markdown.
+- Entraînement LoRA/SFT réel : llama.cpp pour GGUF et Transformers + PEFT pour les modèles Transformers.
+- Checkpoints et journaux réels d'entraînement.
+- Evaluation par générations réelles sur des scénarios comportementaux.
+- Analyse des échecs, génération de données correctives puis nouveau cycle d'entraînement.
+- Chat post-entraînement avec l'adaptateur actif.
+- Export d'un projet complet avec manifeste reproductible.
+- Documents locaux, recherche, mémoire et conversations conservés localement.
 
-## Principe
+## Comment Vanelle choisit le moteur
 
-Vanelle ne prétend pas pouvoir entraîner n'importe quel modèle sur n'importe quelle machine. L'Advisor calcule une configuration à partir de la taille réelle du modèle, du type de modèle détecté, de l'objectif et des capacités matérielles disponibles. L'entraînement est ensuite exécuté par un moteur local réel, pas par une simulation.
+Vanelle ne prétend pas entraîner n'importe quel modèle avec n'importe quelle machine.
 
-## Moteur d'entraînement
+```text
+Modèle importé
+    ↓
+Détection du format / architecture
+    ↓
+Objectif utilisateur
+    ↓
+Dataset disponible
+    ↓
+CPU / RAM / GPU / backend
+    ↓
+Plan d'entraînement
+    ↓
+Training réel
+    ↓
+Evaluation réelle
+    ↓
+Analyse des erreurs
+    ↓
+Corrections + nouveau cycle
+```
 
-Le pipeline Windows embarque un moteur basé sur le fork qvac-fabric-llm.cpp qui fournit le binaire de fine-tuning LoRA ainsi que les outils d'inférence, d'export et de perplexité. Les binaires sont construits dans GitHub Actions à partir du dépôt du moteur au moment de chaque release.
+Pour un GGUF, Vanelle utilise le moteur llama.cpp embarqué.
 
-## Limites importantes
+Pour un modèle Transformers, Vanelle utilise un moteur local Python basé sur Transformers + PEFT. Les poids doivent être accessibles sur la machine et le runtime Python correspondant doit être installé. L'application refuse de transformer un modèle inaccessible en faux entraînement.
 
-L'entraînement demande des ressources matérielles réelles. Les modèles volumineux peuvent dépasser la RAM/VRAM disponible. L'interface affiche les contraintes détectées afin d'éviter de lancer aveuglément un entraînement impossible.
+## Utilisation par de grandes équipes IA
 
+L'architecture est volontairement agnostique du fournisseur. Une équipe peut importer un modèle dont les poids et l'architecture d'entraînement sont légalement et techniquement accessibles, utiliser ses propres données, puis exporter :
+
+- les données préparées ;
+- la configuration du projet ;
+- les checkpoints ;
+- l'adaptateur ;
+- le rapport d'évaluation ;
+- `vanelle_project_manifest.json` ;
+- un README de reproduction.
+
+Cela permet d'intégrer Vanelle dans un environnement de recherche ou de production où l'organisation contrôle elle-même les modèles et les GPU.
+
+Un modèle propriétaire fermé dont les poids, le tokenizer, l'architecture d'entraînement ou l'accès aux mécanismes de fine-tuning ne sont pas fournis ne peut pas être entraîné localement par Vanelle. Vanelle ne contourne pas ces restrictions.
+
+## Validation sans simulation
+
+Les workflows GitHub Actions téléchargent un vrai modèle ouvert et un vrai dataset public, exécutent un véritable entraînement LoRA, une génération réelle, une évaluation réelle et publient les rapports comme artefacts CI.
+
+Le pipeline Windows construit également les exécutables Vanelle, le moteur CPU/Vulkan et effectue des tests de conversation et de LoRA avec de vrais fichiers GGUF.
+
+## Structure
+
+- `app/` — application Vanelle Tauri + React.
+- `universal_engine/` — scripts locaux Transformers/PEFT.
+- `scripts/` — construction Windows.
+- `.github/workflows/` — validations réelles CI.
