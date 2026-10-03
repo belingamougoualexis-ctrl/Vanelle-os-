@@ -118,6 +118,27 @@ jobs:
           test -s ci/chat.txt
           echo REAL_CHAT_OK
 
+      - name: Merge real PEFT adapter into final model
+        run: |
+          python universal_engine/hf_merge.py             --model ci/model             --adapter ci/training/adapter             --output ci/merged-model
+          test -f ci/merged-model/config.json
+          ls -lah ci/merged-model
+          echo REAL_MERGE_OK
+
+      - name: Verify final merged model loads and generates
+        run: |
+          python universal_engine/model_manifest.py ci/merged-model | tee ci/merged-manifest.json
+          python - <<'PY'
+          import json
+          v=json.load(open("ci/merged-manifest.json", encoding="utf-8"))
+          assert v["format"] == "transformers"
+          assert v["weight_files"] > 0
+          print("REAL_MERGED_MODEL_MANIFEST_OK")
+          PY
+          python universal_engine/hf_chat.py             --model ci/merged-model             --messages ci/messages.json             --max-new-tokens 16 | tee ci/merged-chat.txt
+          test -s ci/merged-chat.txt
+          echo REAL_MERGED_CHAT_OK
+
       - uses: actions/upload-artifact@v4
         with:
           name: vanelle-universal-real-validation
@@ -126,3 +147,5 @@ jobs:
             ci/training/training_summary.json
             ci/evaluation.json
             ci/chat.txt
+            ci/merged-manifest.json
+            ci/merged-chat.txt
