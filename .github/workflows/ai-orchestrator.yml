@@ -1,0 +1,59 @@
+name: AI Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task for the AI council"
+        required: true
+        type: string
+      mode:
+        description: "analysis or implement"
+        required: true
+        default: analysis
+        type: choice
+        options:
+          - analysis
+          - implement
+
+permissions:
+  contents: write
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5' }}
+      CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL || '' }}
+      GROK_MODEL: ${{ vars.GROK_MODEL || 'grok-4.7' }}
+      TASK: ${{ inputs.task }}
+      MODE: ${{ inputs.mode }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run AI council
+        run: python .ai/orchestrator.py
+      - name: Publish run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-orchestrator-run
+          path: .ai/runs/
+      - name: Commit successful implementation
+        if: env.MODE == 'implement'
+        run: |
+          if git diff --quiet; then
+            echo "No code changes were produced."
+            exit 0
+          fi
+          git config user.name "AI Orchestrator"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(ai): apply orchestrated implementation"
+          git push
