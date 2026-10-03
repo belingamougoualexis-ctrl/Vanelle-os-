@@ -116,7 +116,7 @@ function App(){
     {!active.messages.length&&<div className="empty"><h2>Votre assistant local</h2><p>Importez un modèle GGUF, puis commencez une conversation.</p><div className="caps"><span>CPU</span><span>GPU Vulkan automatique</span><span>Documents locaux</span><span>Mémoire locale</span></div></div>}
     {active.messages.map((m,i)=><article key={i} className={m.role}><div className="who">{m.role==="user"?"Vous":m.role==="assistant"?"Vanelle":"Contexte"}</div><div className="content">{m.content||(busy&&i===active.messages.length-1?"Génération…":"")}</div></article>)}
    </section>
-   <footer><textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder="Écrivez votre message…"/><div className="footerbar"><span>{hardware?.gpu||"GPU : détection en cours"} · Entrée pour envoyer</span><button className="send" disabled={busy||!input.trim()} onClick={send}>{busy?"Génération…":"Envoyer"}</button></div></footer>
+   <footer><textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder="Écrivez votre message…"/><div className="footerbar"><span>{hardware?.gpu||"GPU : détection en cours"} · Entrée pour envoyer</span><button className="send" disabled={busy||!input.trim()} onClick={send}>Envoyer</button>{busy&&<button onClick={async()=>{try{await invoke("stop_engine");setBusy(false);setStatus("Génération arrêtée. Le moteur sera relancé au prochain message.")}catch(e){setStatus(String(e))}}}>Arrêter</button></div></footer>
   </main>
   {showSettings&&<div className="modal"><div className="card"><div className="card-head"><h2>Réglages locaux</h2><button onClick={()=>setShowSettings(false)}>Fermer</button></div>
    <label>Mode matériel<select value={settings.gpu_mode} onChange={e=>setSettings({...settings,gpu_mode:e.target.value})}><option value="auto">Auto : GPU puis CPU</option><option value="gpu">GPU Vulkan</option><option value="cpu">CPU uniquement</option></select></label>
@@ -129,7 +129,7 @@ function App(){
    <div className="card-head"><h3>Mémoire locale</h3><span>{memory.length} élément(s)</span></div>
    <div className="memory">{memory.map((x,i)=><div key={i}><span>{x}</span><button onClick={()=>deleteMemory(i)}>Supprimer</button></div>)}</div>
    <div className="hardware"><b>Machine</b><div>{hardware?.cpu||"CPU : —"}</div><div>{hardware?.ram||"RAM : —"}</div><div>{hardware?.gpu||"GPU : —"}</div><div>{hardware?.vulkan||"Vulkan : détection —"}</div></div>
-   <button className="primary wide" onClick={()=>{persist(sessions,settings,docs,memory,model);setShowSettings(false);setStatus("Réglages enregistrés. Redémarrez le moteur en changeant de modèle.")}}>Enregistrer</button>
+   <button className="primary wide" onClick={async()=>{try{persist(sessions,settings,docs,memory,model);if(model){await invoke("set_model",{id:model});}setShowSettings(false);setStatus("Réglages enregistrés. Moteur redémarré avec la nouvelle configuration.")}catch(e){setStatus(String(e))}}}>Enregistrer</button>
   </div></div>}
  </div>
 }
