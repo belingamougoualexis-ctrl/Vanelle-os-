@@ -213,7 +213,7 @@ jobs:
 
   hf-finetune:
     name: Real model fine-tuning on Hugging Face
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
