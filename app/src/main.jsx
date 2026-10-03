@@ -73,7 +73,19 @@ function App(){
         if(p.project_id===project_id)setTrainingLog(x=>[...x,String(p.line||"")].slice(-240));
       });
       const c=listen("training://done",e=>{
-        const p=e.payload||{};if(p.project_id===project_id){setTraining(false);setStatus(p.code===0?"Entraînement terminé":"Entraînement échoué");loadProjects();}
+        const p=e.payload||{};
+        if(p.project_id===project_id){
+          setTraining(false);
+          if(p.code===0){
+            setStatus("Entraînement terminé · activation du modèle entraîné");
+            invoke("activate_project_adapter",{project_id:p.project_id})
+              .then(()=>setStatus("Modèle entraîné actif · prêt pour l'évaluation et le chat"))
+              .catch(err=>setStatus(String(err)));
+          }else{
+            setStatus("Entraînement échoué");
+          }
+          loadProjects();
+        }
       });
       off=()=>{a.then(f=>f());b.then(f=>f());c.then(f=>f())};
     });
