@@ -169,7 +169,6 @@ def main() -> int:
     from transformers import Trainer, TrainingArguments
     training_kwargs = dict(
         output_dir=str(output_dir / "checkpoints"),
-        overwrite_output_dir=True,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=max(1, args.batch_size),
         gradient_accumulation_steps=1,
@@ -183,6 +182,9 @@ def main() -> int:
     if torch.cuda.is_available():
         training_kwargs["fp16"] = not torch.cuda.is_bf16_supported()
         training_kwargs["bf16"] = torch.cuda.is_bf16_supported()
+    import inspect
+    supported = set(inspect.signature(TrainingArguments.__init__).parameters)
+    training_kwargs = {k:v for k,v in training_kwargs.items() if k in supported}
     train_args = TrainingArguments(**training_kwargs)
 
     trainer_kwargs = dict(
