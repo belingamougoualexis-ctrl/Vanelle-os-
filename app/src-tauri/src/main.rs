@@ -77,6 +77,38 @@ struct DatasetInfo {
     bytes: u64,
 }
 
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct VisionInfo {
+    project_id: String,
+    dataset_path: Option<String>,
+    classes: Vec<String>,
+    images: usize,
+    checkpoint_path: Option<String>,
+    best_accuracy: Option<f64>,
+    status: String,
+}
+
+fn vision_file(dir:&Path,id:&str)->PathBuf{dir.join(format!("{id}-vision.json"))}
+fn load_vision_info(dir:&Path,id:&str)->VisionInfo{
+    fs::read_to_string(vision_file(dir,id)).ok()
+        .and_then(|s|serde_json::from_str(&s).ok())
+        .unwrap_or_else(||VisionInfo{project_id:id.into(),dataset_path:None,classes:Vec::new(),images:0,checkpoint_path:None,best_accuracy:None,status:"Aucun dataset vision".into()})
+}
+fn save_vision_info(dir:&Path,v:&VisionInfo)->Result<()>{fs::write(vision_file(dir,&v.project_id),serde_json::to_vec_pretty(v)?)?;Ok(())}
+fn is_image_file(p:&Path)->bool{matches!(p.extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase().as_str(),"jpg"|"jpeg"|"png"|"bmp"|"webp"|"tif"|"tiff")}
+fn image_count(root:&Path)->usize{fs::read_dir(root).map(|it|it.flatten().map(|e|{let p=e.path();if p.is_dir(){image_count(&p)}else if is_image_file(&p){1}else{0}}).sum()).unwrap_or(0)}
+fn copy_images_only(src:&Path,dst:&Path)->Result<usize>{
+    fs::create_dir_all(dst)?; let mut count=0usize;
+    for e in fs::read_dir(src)?{
+        let e=e?;let from=e.path();let to=dst.join(e.file_name());
+        if from.is_dir(){count+=copy_images_only(&from,&to)?;} else if is_image_file(&from){
+            if let Some(parent)=to.parent(){fs::create_dir_all(parent)?;} fs::copy(&from,&to)?;count+=1;
+        }
+    }
+    Ok(count)
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Advisor {
     model: String,
@@ -793,6 +825,70 @@ async fn model_inspection(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,model_i
 }
 
 
+
+#[tauri::command]
+async fn vision_info(s:State<'_,Arc<AppState>>,project_id:String)->Result<VisionInfo,String>{Ok(load_vision_info(&s.projects_dir,&project_id))}
+
+#[tauri::command]
+async fn import_vision_dataset(s:State<'_,Arc<AppState>>,project_id:String,path:String)->Result<VisionInfo,String>{
+    let p=load_project(&s.projects_dir,&project_id).map_err(|e|e.to_string())?;
+    if !Path::new(&path).is_dir(){return Err("Sélectionnez un dossier contenant un dossier par classe.".into());}
+    let src=Path::new(&path);
+    let classes=fs::read_dir(src).map_err(|e|e.to_string())?.flatten().filter(|e|e.path().is_dir()).map(|e|e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+    if classes.len()<2{return Err("Le dataset vision doit contenir au moins deux classes, chacune dans son propre dossier.".into());}
+    let total=classes.iter().map(|c|image_count(&src.join(c))).sum::<usize>();
+    if total<10{return Err(format!("Dataset trop petit : {total} images. Ajoutez davantage d'images avant l'entraînement."));}
+    let dir=s.projects_dir.join(&project_id);fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+    let target=dir.join("vision_dataset");if target.exists(){fs::remove_dir_all(&target).map_err(|e|e.to_string())?;}fs::create_dir_all(&target).map_err(|e|e.to_string())?;
+    for class in &classes{copy_images_only(&src.join(class),&target.join(class)).map_err(|e|e.to_string())?;}
+    let v=VisionInfo{project_id:project_id.clone(),dataset_path:Some(target.to_string_lossy().into_owned()),classes:classes.clone(),images:total,checkpoint_path:None,best_accuracy:None,status:"Dataset vision prêt".into()};
+    save_vision_info(&s.projects_dir,&v).map_err(|e|e.to_string())?;
+    let mut p2=p;p2.status=format!("Dataset vision prêt · {total} images · {} classes",classes.len());p2.updated_at=now_iso();save_project(&s.projects_dir,&p2).map_err(|e|e.to_string())?;
+    Ok(v)
+}
+
+#[tauri::command]
+async fn start_vision_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<(),String>{
+    if *s.training_running.lock().await{return Err("Un entraînement est déjà en cours.".into());}
+    let mut v=load_vision_info(&s.projects_dir,&project_id);let dataset=v.dataset_path.clone().ok_or("Importez d'abord un dataset vision.")?;
+    if v.classes.len()<2||v.images<10{return Err("Dataset vision insuffisant pour commencer.".into());}
+    let dir=s.projects_dir.join(&project_id);let output=dir.join("vision-training");if output.exists(){fs::remove_dir_all(&output).map_err(|e|e.to_string())?;}fs::create_dir_all(&output).map_err(|e|e.to_string())?;
+    let args=vec!["--dataset".into(),dataset,"--output".into(),output.to_string_lossy().into_owned(),"--epochs".into(),"3".into(),"--batch-size".into(),"16".into()];
+    let (program,prefix)=python_runner().map_err(|e|e.to_string())?;let script=resource_script(&app,"vision_train.py").map_err(|e|e.to_string())?;
+    let mut child=TokioCommand::new(program);child.args(prefix).arg(script).args(args).stdout(Stdio::piped()).stderr(Stdio::piped());let mut child=child.spawn().map_err(|e|format!("Impossible de lancer l'entraînement vision : {e}"))?;
+    let pid=child.id().ok_or("PID Python introuvable.")?;*s.training_python_pid.lock().await=Some(pid);*s.training_running.lock().await=true;
+    v.status="Entraînement vision en cours".into();save_vision_info(&s.projects_dir,&v).map_err(|e|e.to_string())?;
+    let handle=app.clone();let state=Arc::clone(&*s);let projects_dir=s.projects_dir.clone();let project_name=project_id.clone();let out_path=output.clone();
+    let stdout=child.stdout.take();let stderr=child.stderr.take();
+    let h1=handle.clone();let pr1=project_name.clone();tokio::spawn(async move{if let Some(out)=stdout{let mut lines=BufReader::new(out).lines();while let Ok(Some(line))=lines.next_line().await{let _=h1.emit("vision://log",serde_json::json!({"project_id":pr1,"line":line}));}}});
+    let h2=handle.clone();let pr2=project_name.clone();tokio::spawn(async move{if let Some(out)=stderr{let mut lines=BufReader::new(out).lines();while let Ok(Some(line))=lines.next_line().await{let _=h2.emit("vision://log",serde_json::json!({"project_id":pr2,"line":line}));}}});
+    tokio::spawn(async move{let code=child.wait().await.ok().and_then(|x|x.code()).unwrap_or(-1);let _=handle.emit("vision://done",serde_json::json!({"project_id":project_name,"code":code}));let mut vv=load_vision_info(&projects_dir,&project_name);if code==0&&out_path.join("best.pt").is_file(){
+        vv.checkpoint_path=Some(out_path.join("best.pt").to_string_lossy().into_owned());vv.status="Entraînement vision terminé".into();if let Ok(t)=fs::read_to_string(out_path.join("training_summary.json")){if let Ok(j)=serde_json::from_str::<serde_json::Value>(&t){vv.best_accuracy=j.get("best_val_accuracy").and_then(|x|x.as_f64());}}
+    }else{vv.status=format!("Entraînement vision échoué (code {code})");}let _=save_vision_info(&projects_dir,&vv);*state.training_running.lock().await=false;*state.training_python_pid.lock().await=None;});
+    Ok(())
+}
+
+#[tauri::command]
+async fn evaluate_vision_project(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<serde_json::Value,String>{
+    let v=load_vision_info(&s.projects_dir,&project_id);let dataset=v.dataset_path.clone().ok_or("Aucun dataset vision.")?;let checkpoint=v.checkpoint_path.clone().ok_or("Entraînez d'abord le modèle vision.")?;
+    let out=s.projects_dir.join(&project_id).join("vision-evaluation.json");let args=vec!["--dataset".into(),dataset,"--checkpoint".into(),checkpoint,"--output".into(),out.to_string_lossy().into_owned()];
+    let r=run_python(&app,"vision_eval.py",&args).await.map_err(|e|e.to_string())?;if !r.status.success(){return Err(String::from_utf8_lossy(&r.stderr).trim().to_string());}
+    let val:serde_json::Value=serde_json::from_slice(&fs::read(&out).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let mut vv=v;vv.best_accuracy=val.get("accuracy").and_then(|x|x.as_f64());vv.status="Évaluation vision terminée".into();save_vision_info(&s.projects_dir,&vv).map_err(|e|e.to_string())?;Ok(val)
+}
+
+#[tauri::command]
+async fn predict_vision_image(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String,image_path:String)->Result<serde_json::Value,String>{
+    let v=load_vision_info(&s.projects_dir,&project_id);let checkpoint=v.checkpoint_path.ok_or("Entraînez d'abord le modèle vision.")?;let img=Path::new(&image_path);if !img.is_file()||!is_image_file(img){return Err("Image introuvable ou format non supporté.".into());}
+    let args=vec!["--checkpoint".into(),checkpoint,"--image".into(),image_path,"--top-k".into(),"5".into()];let r=run_python(&app,"vision_predict.py",&args).await.map_err(|e|e.to_string())?;if !r.status.success(){return Err(String::from_utf8_lossy(&r.stderr).trim().to_string());}
+    serde_json::from_str::<serde_json::Value>(String::from_utf8_lossy(&r.stdout).trim()).map_err(|e|format!("Résultat vision invalide : {e}"))
+}
+
+#[tauri::command]
+async fn vision_runtime_info(app:tauri::AppHandle)->Result<serde_json::Value,String>{
+    let (program,prefix)=python_runner().map_err(|e|e.to_string())?;let code="import torch,PIL,torchvision; print('torch='+torch.__version__); print('torchvision='+torchvision.__version__); print('cuda='+str(torch.cuda.is_available()))";let mut args=prefix.clone();args.extend(["-c".into(),code.into()]);let out=TokioCommand::new(program).args(args).output().await.map_err(|e|e.to_string())?;
+    if !out.status.success(){return Ok(serde_json::json!({"ready":false,"detail":String::from_utf8_lossy(&out.stderr)}));}Ok(serde_json::json!({"ready":true,"detail":String::from_utf8_lossy(&out.stdout).trim(),"scripts":resource_script(&app,"vision_train.py").is_ok()}))
+}
+
 #[tauri::command]
 async fn start_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<(),String>{
     if *s.training_running.lock().await{return Err("Un entraînement est déjà en cours.".into())}
@@ -1141,7 +1237,7 @@ fn run()->Result<()>{
         list_models,current_model,current_adapter,hardware_info,import_model,remove_model,set_model,set_active_adapter,stop_engine,
         import_document,list_documents,remove_document,search_documents,chat,
         list_projects,create_project,import_project_dataset,model_advisor,model_inspection,
-        start_training,stop_training,evaluate_project,generate_corrections,merge_project_model,export_project,activate_project_adapter,hf_runtime_info
+        start_training,stop_training,evaluate_project,generate_corrections,merge_project_model,export_project,activate_project_adapter,hf_runtime_info,vision_info,import_vision_dataset,start_vision_training,evaluate_vision_project,predict_vision_image,vision_runtime_info
       ])
       .run(tauri::generate_context!()).map_err(|e|anyhow!(e.to_string()))?;
     Ok(())
