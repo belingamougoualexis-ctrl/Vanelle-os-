@@ -32,6 +32,7 @@ function App(){
   const [dataset,setDataset]=useState(null),[advisor,setAdvisor]=useState(null),[inspection,setInspection]=useState(null);
   const [evalReport,setEvalReport]=useState(null),[trainingLog,setTrainingLog]=useState([]),[training,setTraining]=useState(false);
   const [hfRuntime,setHfRuntime]=useState(null);
+  const [vision,setVision]=useState(null),[visionReport,setVisionReport]=useState(null),[visionPrediction,setVisionPrediction]=useState(null),[visionRuntime,setVisionRuntime]=useState(null);
 
   const active=useMemo(()=>sessions.find(x=>x.id===activeId)||sessions[0],[sessions,activeId]);
   const project=useMemo(()=>projects.find(p=>p.id===project_id)||null,[projects,project_id]);
@@ -54,6 +55,7 @@ function App(){
       setModels(m);setModel(cur||model);setDocs(ds);setHardware(hw);setProjects(ps);
       const selected=ps.find(p=>p.id===project_id)||ps[0];
       if(selected&&!project_id){setProjectId(selected.id);setObjective(selected.objective);setProjectName(selected.name);setTests(defaultTests(selected.objective));}
+      if(selected){try{setVision(await invoke("vision_info",{project_id:selected.id}))}catch{}}
       setStatus(cur?"Moteur local prêt":"Importez un modèle compatible pour commencer");
     }catch(e){setStatus(String(e))}
   }
@@ -87,7 +89,20 @@ function App(){
           loadProjects();
         }
       });
-      off=()=>{a.then(f=>f());b.then(f=>f());c.then(f=>f())};
+      const d=listen("vision://log",e=>{
+        const p=e.payload||{};
+        if(p.project_id===project_id)setTrainingLog(x=>[...x,String(p.line||"")].slice(-240));
+      });
+      const e=listen("vision://done",ev=>{
+        const p=ev.payload||{};
+        if(p.project_id===project_id){
+          setTraining(false);
+          invoke("vision_info",{project_id:project_id}).then(setVision).catch(()=>{});
+          loadProjects();
+          setStatus(p.code===0?"Entraînement vision terminé · modèle prêt":"Entraînement vision échoué");
+        }
+      });
+      off=()=>{a.then(f=>f());b.then(f=>f());c.then(f=>f());d.then(f=>f());e.then(f=>f())};
     });
     return()=>off?.();
   },[activeId,project_id]);
@@ -97,6 +112,8 @@ function App(){
     const p=projects.find(x=>x.id===id);if(!p)return;
     setProjectId(id);setProjectName(p.name);setObjective(p.objective);setDataset(p.dataset_path?{path:p.dataset_path,examples:p.examples}:null);setTests(defaultTests(p.objective));setAdvisor(null);setEvalReport(null);setTrainingLog([]);
     persist({model,sessions,activeId,settings,docs,memory,project_id:id});
+    try{setVision(await invoke("vision_info",{project_id:id}))}catch{setVision(null);}
+    setVisionReport(null);setVisionPrediction(null);
     try{await invoke("activate_project_adapter",{project_id:id});setStatus(p.adapter_path?"Adaptateur du projet activé":"Modèle de base activé");}catch(e){setStatus(String(e))}
   }
 
@@ -143,6 +160,30 @@ function App(){
   async function runAdvisor(){
     if(!project)return;
     try{const a=await invoke("model_advisor",{project_id:project.id});setAdvisor(a);setStatus("Stratégie calculée à partir du modèle, des données machine et de l'objectif")}catch(e){setStatus(String(e))}
+  }
+
+  async function importVisionDataset(){
+    if(!project){setStatus("Créez ou sélectionnez un projet");return}
+    const p=await open({directory:true,multiple:false,title:"Choisir le dataset vision (un dossier par classe)"});
+    if(typeof p!=="string")return;
+    try{const v=await invoke("import_vision_dataset",{project_id:project.id,path:p});setVision(v);setVisionReport(null);setVisionPrediction(null);setStatus(`Dataset vision prêt · ${v.images} images · ${v.classes.length} classes`)}catch(e){setStatus(String(e))}
+  }
+  async function checkVisionRuntime(){try{setVisionRuntime(await invoke("vision_runtime_info"));setStatus("Moteur vision vérifié")}catch(e){setVisionRuntime({ready:false,detail:String(e)});setStatus(String(e))}}
+  async function trainVision(){
+    if(!project||!vision?.dataset_path)return;
+    setTrainingLog([]);setTraining(true);setTab("vision");setStatus("Entraînement vision local démarré");
+    try{await invoke("start_vision_training",{project_id:project.id})}catch(e){setTraining(false);setStatus(String(e))}
+  }
+  async function evaluateVision(){
+    if(!project||!vision?.checkpoint_path)return;
+    setVisionReport(null);setStatus("Évaluation vision sur le holdout…");
+    try{const r=await invoke("evaluate_vision_project",{project_id:project.id});setVisionReport(r);setVision(await invoke("vision_info",{project_id:project.id}));setStatus(`Évaluation vision terminée · ${Math.round((r.accuracy||0)*100)}%`)}catch(e){setStatus(String(e))}
+  }
+  async function predictVision(){
+    if(!project||!vision?.checkpoint_path)return;
+    const p=await open({multiple:false,filters:[{name:"Images",extensions:["jpg","jpeg","png","bmp","webp","tif","tiff"]}]});
+    if(typeof p!=="string")return;
+    try{const r=await invoke("predict_vision_image",{project_id:project.id,image_path:p});setVisionPrediction(r);setStatus("Image analysée localement")}catch(e){setStatus(String(e))}
   }
 
   async function startTraining(){
@@ -218,6 +259,7 @@ function App(){
         <button className={tab==="training"?"active":""} onClick={()=>setTab("training")}><span>05</span> Training Lab</button>
         <button className={tab==="evaluation"?"active":""} onClick={()=>setTab("evaluation")}><span>06</span> Evaluation Lab</button>
         <button className={tab==="chat"?"active":""} onClick={()=>setTab("chat")}><span>07</span> Chat local</button>
+        <button className={tab==="vision"?"active":""} onClick={()=>setTab("vision")}><span>08</span> Vision Lab</button>
       </nav>
       <div className="side-bottom">
         <button onClick={addDocument}>Ajouter un document</button>
@@ -298,6 +340,36 @@ function App(){
         <div className="section-head"><div><span className="section-kicker">EVALUATION LAB</span><h3>Tester l'IA comme un utilisateur</h3><p>Vanelle envoie plusieurs scénarios à l'IA et vérifie objectivement les réponses et les contraintes définies.</p></div><div className="inline-actions"><button onClick={improve} disabled={!evalReport?.failed}>Corriger les échecs</button><button className="primary-btn" onClick={evaluate} disabled={!project}>Lancer les tests</button></div></div>
         <div className="scenario-grid">{tests.map((t,i)=><div className="scenario" key={i}><span>{String(i+1).padStart(2,"0")}</span><b>{t.name}</b><p>{t.persona}</p><small>{t.prompt}</small></div>)}</div>
         {evalReport&&<div className="report"><div className="report-head"><div><span className="section-kicker">TEST REPORT</span><h3>{evalReport.average_score}% score moyen</h3></div><span>{evalReport.passed} réussis · {evalReport.failed} échecs</span></div>{evalReport.results.map((r,i)=><details className={r.passed?"result pass":"result fail"} key={i}><summary><b>{r.name}</b><span>{r.score}%</span></summary><p>{r.response}</p>{r.reasons.length>0&&<ul>{r.reasons.map((x,n)=><li key={n}>{x}</li>)}</ul>}</details>)}</div>}
+      </section>}
+
+      {tab==="vision"&&<section className="page">
+        <div className="section-head"><div><span className="section-kicker">VISION LAB</span><h3>Reconnaissance d'images locale</h3><p>Importez vos classes d'images, entraînez un vrai classifieur de vision, mesurez-le sur un holdout puis testez une nouvelle image.</p></div>
+          <div className="inline-actions"><button onClick={checkVisionRuntime}>Vérifier le moteur vision</button><button className="primary-btn" onClick={importVisionDataset}>Importer le dataset</button></div></div>
+        {visionRuntime&&<div className={visionRuntime.ready?"runtime-box ready":"runtime-box"}><b>PyTorch + TorchVision</b><span>{visionRuntime.ready?"Disponible":"Non prêt"}</span><small>{visionRuntime.detail||"—"}</small></div>}
+        <div className="stat-grid">
+          <div className="stat"><span>IMAGES</span><b>{vision?.images||0}</b><small>images importées localement</small></div>
+          <div className="stat"><span>CLASSES</span><b>{vision?.classes?.length||0}</b><small>{vision?.classes?.slice(0,4).join(" · ")||"Aucune classe"}</small></div>
+          <div className="stat"><span>MODÈLE</span><b>MobileNetV3 Small</b><small>transfer learning local</small></div>
+          <div className="stat"><span>HOLDOUT</span><b>{vision?.best_accuracy!=null?Math.round(vision.best_accuracy*100)+"%":"—"}</b><small>{vision?.status||"Pas encore entraîné"}</small></div>
+        </div>
+        <div className="two-col">
+          <div className="panel">
+            <div className="panel-head"><div><span className="section-kicker">DATASET FORMAT</span><h3>Un dossier par classe</h3></div><button onClick={importVisionDataset}>Remplacer</button></div>
+            <p>Exemple : <b>dataset/chat/</b>, <b>dataset/chien/</b>, <b>dataset/voiture/</b>. Vanelle copie uniquement les fichiers image supportés et conserve les classes.</p>
+            <div className="chip-row">{(vision?.classes||[]).map(x=><span key={x}>{x}</span>)}</div>
+          </div>
+          <div className="panel">
+            <div className="panel-head"><div><span className="section-kicker">TRAINING</span><h3>Entraîner réellement</h3></div></div>
+            <p>Le moteur utilise PyTorch + TorchVision, avec un backbone MobileNetV3 pré-entraîné et une tête adaptée à vos classes.</p>
+            <div className="inline-actions"><button onClick={evaluateVision} disabled={!vision?.checkpoint_path||training}>Évaluer le holdout</button><button className="primary-btn" onClick={trainVision} disabled={!vision?.dataset_path||training}>{training?"En cours…":"Lancer l'entraînement"}</button></div>
+          </div>
+        </div>
+        {visionReport&&<div className="panel"><div className="panel-head"><div><span className="section-kicker">VISION REPORT</span><h3>{Math.round((visionReport.accuracy||0)*100)}% de précision sur les images de validation</h3></div><span>{visionReport.images} images évaluées</span></div><pre className="vision-pre">{JSON.stringify(visionReport.per_class||{},null,2)}</pre></div>}
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">LIVE PREDICTION</span><h3>Tester une nouvelle image</h3></div><button className="primary-btn" onClick={predictVision} disabled={!vision?.checkpoint_path}>Choisir une image</button></div>
+          {visionPrediction?<div className="prediction"><div><small>PRÉDICTION</small><b>{visionPrediction.predicted?.label||"—"}</b><span>{Math.round((visionPrediction.predicted?.confidence||0)*100)}% de confiance</span></div><div><small>TOP-5</small>{(visionPrediction.top_k||[]).map((x,i)=><span key={i}>{x.label} · {Math.round(x.confidence*100)}%</span>)}</div></div>:<p>Après entraînement, choisissez une image extérieure au dataset pour vérifier ce que le modèle reconnaît.</p>}
+        </div>
+        <div className="terminal"><div className="terminal-head"><span>VISION TRAINING LOG</span><span>{training?"RUNNING":"IDLE"}</span></div><pre>{trainingLog.length?trainingLog.join("\n"):"Les sorties réelles du moteur vision apparaîtront ici."}</pre></div>
       </section>}
 
       {tab==="chat"&&<section className="chat-page">
