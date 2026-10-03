@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: alphaprime-real-validation
+  cancel-in-progress: true
+
 jobs:
   assemble:
     name: Reconstruct exact Alpha Prime source
