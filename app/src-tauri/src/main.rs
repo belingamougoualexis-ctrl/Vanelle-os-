@@ -178,26 +178,18 @@ fn model_from_path(path: &Path) -> Result<Model> {
             format:"gguf".into(),family,architecture:"llama.cpp-compatible".into(),backend:"llama.cpp".into()})
     } else if path.is_dir() {
         if !path.join("config.json").is_file() { return Err(anyhow!("Dossier modèle invalide : config.json introuvable.")); }
-        let has_weights=fs::read_dir(path)?.flatten().any(|e|{
-            let p=e.path();
-            p.is_file() && matches!(p.extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase().as_str(),
-                "safetensors"|"bin"|"pt"|"pth"|"ckpt")
-        }) || fs::read_dir(path)?.flatten().any(|e|e.path().is_dir());
-        let recursive_weight=if has_weights {true} else {
-            fn walk(p:&Path)->bool {
-                if let Ok(entries)=fs::read_dir(p) {
-                    for e in entries.flatten() {
-                        let q=e.path();
-                        if q.is_file() && matches!(q.extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase().as_str(),
-                            "safetensors"|"bin"|"pt"|"pth"|"ckpt") { return true; }
-                        if q.is_dir() && walk(&q) { return true; }
-                    }
+        fn has_model_weights(p:&Path)->bool {
+            if let Ok(entries)=fs::read_dir(p) {
+                for e in entries.flatten() {
+                    let q=e.path();
+                    if q.is_file() && matches!(q.extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase().as_str(),
+                        "safetensors"|"bin"|"pt"|"pth"|"ckpt") { return true; }
+                    if q.is_dir() && has_model_weights(&q) { return true; }
                 }
-                false
             }
-            walk(path)
-        };
-        if !recursive_weight { return Err(anyhow!("Dossier modèle invalide : aucun fichier de poids détecté.")); }
+            false
+        }
+        if !has_model_weights(path) { return Err(anyhow!("Dossier modèle invalide : aucun fichier de poids détecté.")); }
         let (family,architecture)=hf_metadata(path)?;
         Ok(Model{id,path:path.to_string_lossy().into_owned(),size_bytes:model_size_bytes(path)?,
             format:"transformers".into(),family,architecture,backend:"Transformers + PEFT".into()})
@@ -602,9 +594,10 @@ async fn import_model(s: State<'_,Arc<AppState>>, path:String)->Result<Model,Str
 }
 
 #[tauri::command]
-async fn remove_model(s: State<'_,Arc<AppState>>, id:String)->Result<(),String>{
+async fn remove_model(s:State<'_,Arc<AppState>>,id:String)->Result<(),String>{
     let m=models(&s.dir).map_err(|e|e.to_string())?.into_iter().find(|m|m.id==id).ok_or("Modèle introuvable")?;
-    fs::remove_file(m.path).map_err(|e|e.to_string())?;
+    let p=Path::new(&m.path);
+    if p.is_dir(){fs::remove_dir_all(p).map_err(|e|e.to_string())?;}else{fs::remove_file(p).map_err(|e|e.to_string())?;}
     if load_model_id(&s.model_state_path).as_deref()==Some(id.as_str()){let _=fs::remove_file(&s.model_state_path);}
     Ok(())
 }
@@ -923,34 +916,58 @@ async fn evaluate_project(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project
 async fn generate_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String,failures:Vec<EvalResult>)->Result<DatasetInfo,String>{
     let p=load_project(&s.projects_dir,&project_id).map_err(|e|e.to_string())?;
     let dataset=p.dataset_path.clone().ok_or("Ajoutez d'abord un dataset.")?;
+    let model=models(&s.dir).map_err(|e|e.to_string())?.into_iter().find(|m|m.id==p.model_id).ok_or("Modèle introuvable.")?;
+    let failures:Vec<_>=failures.into_iter().filter(|x|!x.passed).take(20).collect();
+    if failures.is_empty(){return Err("Aucun échec à corriger.".into());}
     let cfg=s.config.read().await.clone();
-    let mut examples=Vec::new();
-    for f in failures.into_iter().filter(|x|!x.passed).take(20){
-        let prompt=format!("Projet: {}\nObjectif: {}\nRéponse actuelle: {}\nProblèmes détectés: {}\nCrée une meilleure réponse destinée à l'utilisateur. Retourne uniquement la réponse finale.",p.name,p.objective,f.response,f.reasons.join("; "));
-        let answer=chat_once(vec![
-            Msg{role:"system".into(),content:"Tu es un correcteur local de données d'entraînement. Produis une réponse de référence claire, exacte et conforme à l'objectif.".into()},
-            Msg{role:"user".into(),content:prompt},
-        ],cfg.clone()).await.map_err(|e|e.to_string())?;
+    let mut new_lines=Vec::new();
+
+    for f in failures {
+        let user_prompt=format!("Projet: {}\nObjectif: {}\nRéponse actuelle: {}\nProblèmes détectés: {}\nProduis uniquement une réponse de référence améliorée pour l'utilisateur. Ne parle pas du test.",p.name,p.objective,f.response,f.reasons.join("; "));
+        let answer=if model.format=="transformers"{
+            let runtime=s.projects_dir.join("_runtime");
+            fs::create_dir_all(&runtime).map_err(|e|e.to_string())?;
+            let msg_file=runtime.join(format!("correction-{}.json",uuid_like()));
+            let msgs=vec![
+                Msg{role:"system".into(),content:"Tu es un correcteur local de données d'entraînement. Produis une réponse de référence claire, exacte et conforme à l'objectif.".into()},
+                Msg{role:"user".into(),content:user_prompt},
+            ];
+            fs::write(&msg_file,serde_json::to_vec(&msgs).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+            let adapter=p.adapter_path.clone().unwrap_or_default();
+            let args=vec!["--model".into(),model.path.clone(),"--adapter".into(),adapter,"--messages".into(),msg_file.to_string_lossy().into_owned(),"--max-new-tokens".into(),cfg.max_tokens.to_string()];
+            let out=run_python(&app,"hf_chat.py",&args).await.map_err(|e|e.to_string())?;
+            let _=fs::remove_file(&msg_file);
+            if !out.status.success(){return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }else{
+            if s.model.read().await.as_ref().map(|m|m.id.as_str())!=Some(p.model_id.as_str()){set_model(app.clone(),s.clone(),p.model_id.clone()).await?;}
+            else if let Some(a)=p.adapter_path.clone(){set_active_adapter(app.clone(),s.clone(),a).await?;}
+            chat_once(vec![
+                Msg{role:"system".into(),content:"Tu es un correcteur local de données d'entraînement. Produis une réponse de référence claire, exacte et conforme à l'objectif.".into()},
+                Msg{role:"user".into(),content:user_prompt},
+            ],cfg.clone()).await.map_err(|e|e.to_string())?
+        };
         if !answer.trim().is_empty(){
-            examples.push(serde_json::json!({"messages":[{"role":"user","content":format!("Cas à corriger: {}",f.name)},{"role":"assistant","content":answer}]}));
+            new_lines.push(serde_json::json!({"messages":[{"role":"user","content":format!("Cas à corriger: {}",f.name)},{"role":"assistant","content":answer}]}));
         }
     }
-    if examples.is_empty(){return Err("Aucune correction générée.")}
+    if new_lines.is_empty(){return Err("Aucune correction exploitable n'a été générée.");}
 
     let path=PathBuf::from(dataset);
-    let mut file=String::new();
-    if let Ok(old)=fs::read_to_string(&path){file.push_str(&old);}
-    for x in examples {file.push_str(&serde_json::to_string(&x).map_err(|e|e.to_string())?);file.push('\n');}
+    let mut file=fs::read_to_string(&path).unwrap_or_default();
+    for x in &new_lines{file.push_str(&serde_json::to_string(x).map_err(|e|e.to_string())?);file.push('\n');}
     fs::write(&path,file).map_err(|e|e.to_string())?;
+
     let mut p2=p;
-    let count=p2.examples.saturating_add(1);
-    p2.examples=count;
-    p2.status="Dataset enrichi avec corrections".into();
+    p2.examples=p2.examples.saturating_add(new_lines.len());
+    p2.status=format!("Dataset enrichi · {} corrections ajoutées",new_lines.len());
     p2.updated_at=now_iso();
     save_project(&s.projects_dir,&p2).map_err(|e|e.to_string())?;
     let md=fs::metadata(&path).map_err(|e|e.to_string())?;
-    Ok(DatasetInfo{project_id:project_id.clone(),path:path.to_string_lossy().into_owned(),examples:count,chat_examples:count,text_examples:0,invalid_lines:0,bytes:md.len()})
+    Ok(DatasetInfo{project_id:project_id.clone(),path:path.to_string_lossy().into_owned(),examples:p2.examples,
+        chat_examples:p2.examples,text_examples:0,invalid_lines:0,bytes:md.len()})
 }
+
 
 #[tauri::command]
 async fn export_project(s:State<'_,Arc<AppState>>,project_id:String,destination:String)->Result<String,String>{
