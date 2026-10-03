@@ -494,6 +494,7 @@ fn guess_family(id: &str) -> String {
 async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objective: &str) -> Result<Advisor> {
     let m = models(&s.dir)?.into_iter().find(|x| x.id == model_id).ok_or_else(|| anyhow!("Modèle introuvable"))?;
     let model_id_owned = m.id.clone();
+    let detected_family = guess_family(&model_id_owned);
     let size = m.size_bytes as f64 / 1073741824.0;
     let gpu = vulkan_available(app).await;
     let (context, batch, rank, modules) = if size >= 12.0 {
@@ -507,7 +508,7 @@ async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objec
     };
     let mut reasons = vec![
         format!("Taille réelle du fichier : {:.2} Go.", size),
-        format!("Famille détectée : {}.", guess_family(&model_id_owned)),
+        format!("Famille détectée : {}.", detected_family),
         format!("Objectif fourni : {}.", objective.trim()),
         if gpu { "Vulkan est disponible sur cette machine ; Vanelle peut proposer l'offload GPU.".into() }
         else { "Aucun GPU Vulkan détecté ; Vanelle propose le CPU pour rester exécutable localement.".into() },
@@ -522,7 +523,7 @@ async fn advisor_for(app: &tauri::AppHandle, s: &AppState, model_id: &str, objec
     Ok(Advisor {
         model: model_id_owned,
         model_size_gb: size,
-        detected_family: guess_family(&model_id_owned),
+        detected_family,
         training_mode: "LoRA / SFT".into(),
         context,
         batch,
