@@ -102,6 +102,7 @@ struct EvalTest {
 #[derive(Clone, serde::Serialize)]
 struct EvalResult {
     name: String,
+    prompt: String,
     response: String,
     passed: bool,
     score: u32,
@@ -694,7 +695,9 @@ async fn start_training(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_i
             args.push("--assistant-loss-only".into());
         }
     }
-    if output.exists(){let _=fs::remove_file(&output);}
+    let has_checkpoint=fs::read_dir(&checkpoints).ok().and_then(|mut it|it.next()).is_some();
+    if output.exists() && !has_checkpoint {let _=fs::remove_file(&output);}
+    if has_checkpoint {args.push("--auto-resume".into());}
     let trainer = if use_gpu { "llama-finetune-lora-vulkan" } else { "llama-finetune-lora" };
     let (mut rx,child)=app.shell().sidecar(trainer).map_err(|e|e.to_string())?.args(args).spawn().map_err(|e|e.to_string())?;
     *s.training_child.lock().await=Some(child);
@@ -762,12 +765,15 @@ async fn evaluate_project(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project
         for k in &t.must_not_contain{total+=1;if !lower.contains(&k.to_lowercase()){points+=1}else{reasons.push(format!("Élément interdit détecté : {}",k));}}
         if total==0{total=1;points=1;}
         let score=((points*100)/total) as u32;
-        results.push(EvalResult{name:t.name,response:answer,passed:score>=80,score,reasons});
+        results.push(EvalResult{name:t.name,prompt:t.prompt,response:answer,passed:score>=80,score,reasons});
     }
     let passed=results.iter().filter(|x|x.passed).count();
     let failed=results.len()-passed;
     let average=if results.is_empty(){0}else{results.iter().map(|x|x.score).sum::<u32>()/(results.len() as u32)};
     let report=ProjectEvaluation{project_id,passed,failed,average_score:average,results};
+    if let Ok(project_dir)=fs::canonicalize(s.projects_dir.join(&report.project_id)) {
+        let _=fs::write(project_dir.join("evaluation.json"), serde_json::to_vec_pretty(&report));
+    }
     let mut pp=p;
     pp.status=if failed==0{"Évaluation réussie".into()}else{"Échecs détectés — amélioration possible".into()};
     pp.updated_at=now_iso();let _=save_project(&s.projects_dir,&pp);
@@ -781,7 +787,7 @@ async fn generate_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,pro
     let cfg=s.config.read().await.clone();
     let mut examples=Vec::new();
     for f in failures.into_iter().filter(|x|!x.passed).take(20){
-        let prompt=format!("Projet: {}\nObjectif: {}\nRéponse actuelle: {}\nProblèmes détectés: {}\nCrée une meilleure réponse destinée à l'utilisateur. Retourne uniquement la réponse finale.",p.name,p.objective,f.response,f.reasons.join("; "));
+        let prompt=format!("Projet: {}\nObjectif: {}\nScénario utilisateur: {}\nRéponse actuelle: {}\nProblèmes détectés: {}\nCrée une réponse de référence meilleure destinée à l'utilisateur. Retourne uniquement la réponse finale.",p.name,p.objective,f.prompt,f.response,f.reasons.join("; "));
         let answer=chat_once(vec![
             Msg{role:"system".into(),content:"Tu es un correcteur local de données d'entraînement. Produis une réponse de référence claire, exacte et conforme à l'objectif.".into()},
             Msg{role:"user".into(),content:prompt},
@@ -798,7 +804,7 @@ async fn generate_corrections(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,pro
     for x in examples {file.push_str(&serde_json::to_string(&x).map_err(|e|e.to_string())?);file.push('\n');}
     fs::write(&path,file).map_err(|e|e.to_string())?;
     let mut p2=p;
-    let count=p2.examples.saturating_add(1);
+    let count=p2.examples.saturating_add(examples.len());
     p2.examples=count;
     p2.status="Dataset enrichi avec corrections".into();
     p2.updated_at=now_iso();
