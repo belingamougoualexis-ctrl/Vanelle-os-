@@ -32,7 +32,7 @@ function App(){
   const [dataset,setDataset]=useState(null),[advisor,setAdvisor]=useState(null),[inspection,setInspection]=useState(null);
   const [evalReport,setEvalReport]=useState(null),[trainingLog,setTrainingLog]=useState([]),[training,setTraining]=useState(false);
   const [hfRuntime,setHfRuntime]=useState(null);
-  const [vision,setVision]=useState(null),[visionReport,setVisionReport]=useState(null),[visionPrediction,setVisionPrediction]=useState(null),[visionRuntime,setVisionRuntime]=useState(null);
+  const [vision,setVision]=useState(null),[visionReport,setVisionReport]=useState(null),[visionPrediction,setVisionPrediction]=useState(null),[visionRuntime,setVisionRuntime]=useState(null),[visionTest,setVisionTest]=useState(null),[visionTestReport,setVisionTestReport]=useState(null);
 
   const active=useMemo(()=>sessions.find(x=>x.id===activeId)||sessions[0],[sessions,activeId]);
   const project=useMemo(()=>projects.find(p=>p.id===project_id)||null,[projects,project_id]);
@@ -112,8 +112,8 @@ function App(){
     const p=projects.find(x=>x.id===id);if(!p)return;
     setProjectId(id);setProjectName(p.name);setObjective(p.objective);setDataset(p.dataset_path?{path:p.dataset_path,examples:p.examples}:null);setTests(defaultTests(p.objective));setAdvisor(null);setEvalReport(null);setTrainingLog([]);
     persist({model,sessions,activeId,settings,docs,memory,project_id:id});
-    try{setVision(await invoke("vision_info",{project_id:id}))}catch{setVision(null);}
-    setVisionReport(null);setVisionPrediction(null);
+    try{setVision(await invoke("vision_info",{project_id:id}));setVisionTest(await invoke("vision_test_info",{project_id:id}))}catch{setVision(null);setVisionTest(null);}
+    setVisionReport(null);setVisionPrediction(null);setVisionTestReport(null);
     try{await invoke("activate_project_adapter",{project_id:id});setStatus(p.adapter_path?"Adaptateur du projet activé":"Modèle de base activé");}catch(e){setStatus(String(e))}
   }
 
@@ -167,6 +167,21 @@ function App(){
     const p=await open({directory:true,multiple:false,title:"Choisir le dataset vision (un dossier par classe)"});
     if(typeof p!=="string")return;
     try{const v=await invoke("import_vision_dataset",{project_id:project.id,path:p});setVision(v);setVisionReport(null);setVisionPrediction(null);setStatus(`Dataset vision prêt · ${v.images} images · ${v.classes.length} classes`)}catch(e){setStatus(String(e))}
+  }
+  async function importVisionTestDataset(){
+    if(!project){setStatus("Créez ou sélectionnez un projet");return}
+    const p=await open({directory:true,multiple:false,title:"Choisir le benchmark de test indépendant"});
+    if(typeof p!=="string")return;
+    try{const t=await invoke("import_vision_test_dataset",{project_id:project.id,path:p});setVisionTest(t);setVisionTestReport(null);setStatus(`Benchmark prêt · ${t.images} images · aucun entraînement`)}catch(e){setStatus(String(e))}
+  }
+  async function runVisionTestOnly(){
+    if(!project||!visionTest?.dataset_path||!vision?.checkpoint_path)return;
+    setVisionTestReport(null);setStatus("Test vision uniquement — le modèle ne sera pas modifié");
+    try{const r=await invoke("run_vision_test",{project_id:project.id});setVisionTestReport(r);setVisionTest(await invoke("vision_test_info",{project_id:project.id}));setStatus(`Test terminé · ${Math.round((r.accuracy||0)*100)}% · ${r.errors||0} erreur(s)`)}catch(e){setStatus(String(e))}
+  }
+  async function makeVisionCorrections(){
+    if(!project||!visionTestReport?.errors)return;
+    try{const t=await invoke("make_vision_corrections",{project_id:project.id});setVisionTest(t);setStatus("Jeu de corrections généré — le modèle n'a pas été modifié")}catch(e){setStatus(String(e))}
   }
   async function checkVisionRuntime(){try{setVisionRuntime(await invoke("vision_runtime_info"));setStatus("Moteur vision vérifié")}catch(e){setVisionRuntime({ready:false,detail:String(e)});setStatus(String(e))}}
   async function trainVision(){
@@ -351,6 +366,21 @@ function App(){
           <div className="stat"><span>CLASSES</span><b>{vision?.classes?.length||0}</b><small>{vision?.classes?.slice(0,4).join(" · ")||"Aucune classe"}</small></div>
           <div className="stat"><span>MODÈLE</span><b>MobileNetV3 Small</b><small>transfer learning local</small></div>
           <div className="stat"><span>HOLDOUT</span><b>{vision?.best_accuracy!=null?Math.round(vision.best_accuracy*100)+"%":"—"}</b><small>{vision?.status||"Pas encore entraîné"}</small></div>
+        </div>
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">TEST ONLY</span><h3>Tester sans entraîner</h3></div><div className="inline-actions"><button onClick={importVisionTestDataset}>Importer benchmark</button><button className="primary-btn" onClick={runVisionTestOnly} disabled={!vision?.checkpoint_path||!visionTest?.dataset_path||training}>Lancer le test</button></div></div>
+          <p>Ce benchmark est séparé des données d'entraînement. Vanelle mesure les erreurs sans modifier le modèle : précision globale, précision par classe, matrice de confusion et erreurs à forte confiance.</p>
+          <div className="stat-grid">
+            <div className="stat"><span>BENCHMARK</span><b>{visionTest?.images||0}</b><small>{visionTest?.status||"Aucun benchmark"}</small></div>
+            <div className="stat"><span>ACCURACY</span><b>{visionTestReport?Math.round((visionTestReport.accuracy||0)*100)+"%":"—"}</b><small>sur le benchmark indépendant</small></div>
+            <div className="stat"><span>ERREURS</span><b>{visionTestReport?.errors??visionTest?.errors??0}</b><small>images mal classées</small></div>
+            <div className="stat"><span>CONFIANCE</span><b>{visionTestReport?.high_confidence_errors??"—"}</b><small>erreurs ≥ 80% de confiance</small></div>
+          </div>
+          {visionTestReport&&<div className="report"><div className="report-head"><div><span className="section-kicker">DIAGNOSTIC</span><h3>{Math.round((visionTestReport.accuracy||0)*100)}% de précision</h3></div><span>{visionTestReport.errors} erreur(s)</span></div>
+            <div className="vision-pre"><b>Matrice de confusion</b><pre>{JSON.stringify(visionTestReport.confusion_matrix||[],null,2)}</pre></div>
+            <div className="vision-pre"><b>Classes</b><pre>{JSON.stringify(visionTestReport.per_class||{},null,2)}</pre></div>
+            {visionTestReport.errors>0&&<div className="inline-actions"><button className="primary-btn" onClick={makeVisionCorrections}>Créer le jeu de corrections</button><span className="empty-note">Les erreurs restent séparées : pour mesurer une amélioration sans biais, utilisez un nouveau benchmark après correction.</span></div>}
+          </div>}
         </div>
         <div className="two-col">
           <div className="panel">
