@@ -97,9 +97,13 @@ jobs:
             $ready=$false
             1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18284/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
             if (!$ready) { throw "Server with LoRA not ready" }
-            $body=@{model="trained-test";messages=@(@{role="user";content="Quel est le code de validation Vanelle ?"});max_tokens=32;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
+            $body=@{model="trained-test";messages=@(@{role="user";content="Quel est le code de validation Vanelle ? /no_think"});max_tokens=64;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
             $resp=Invoke-RestMethod -Uri "http://127.0.0.1:18284/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
-            if ([string]::IsNullOrWhiteSpace([string]$resp.choices[0].message.content)) { throw "LoRA inference returned empty output" }
+            $content=[string]$resp.choices[0].message.content
+            $reasoning=[string]$resp.choices[0].message.reasoning_content
+            if ([string]::IsNullOrWhiteSpace($content) -and [string]::IsNullOrWhiteSpace($reasoning)) { throw "LoRA inference returned empty output" }
+            Write-Host "LoRA response content: $content"
+            Write-Host "LoRA response reasoning: $reasoning"
             Write-Host "REAL_GGUF_LORA_INFERENCE_OK"
           } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
 
