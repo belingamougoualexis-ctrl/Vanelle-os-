@@ -31,6 +31,7 @@ struct AppState{
  child:Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
  dir:PathBuf,
  docs_path:PathBuf,
+ model_state_path:PathBuf,
  docs:RwLock<Vec<(String,String)>>
 }
 
@@ -60,6 +61,8 @@ fn save_docs(path:&Path,docs:&[(String,String)])->Result<()>{
  fs::rename(tmp,path)?;
  Ok(())
 }
+fn load_model_id(path:&Path)->Option<String>{fs::read_to_string(path).ok().map(|s|s.trim().to_string()).filter(|s|!s.is_empty())}
+fn save_model_id(path:&Path,id:&str)->Result<()>{fs::write(path,id.as_bytes())?;Ok(())}
 fn extract_doc(path:&Path)->Result<String>{
  let ext=path.extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase();
  match ext.as_str(){
@@ -145,11 +148,14 @@ async fn import_model(s:State<'_,Arc<AppState>>,path:String)->Result<Model,Strin
 #[tauri::command]
 async fn remove_model(s:State<'_,Arc<AppState>>,id:String)->Result<(),String>{
  let m=models(&s.dir).map_err(|e|e.to_string())?.into_iter().find(|m|m.id==id).ok_or("Modèle introuvable")?;
- fs::remove_file(m.path).map_err(|e|e.to_string())?;Ok(())
+ fs::remove_file(m.path).map_err(|e|e.to_string())?;
+ if load_model_id(&s.model_state_path).as_deref()==Some(id.as_str()){let _=fs::remove_file(&s.model_state_path);}
+ Ok(())
 }
 #[tauri::command]
 async fn set_model(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,id:String)->Result<(),String>{
  let m=models(&s.dir).map_err(|e|e.to_string())?.into_iter().find(|m|m.id==id).ok_or("Modèle introuvable")?;
+ save_model_id(&s.model_state_path,&m.id).map_err(|e|e.to_string())?;
  *s.model.write().await=Some(m);
  start(&app,&s).await.map_err(|e|e.to_string()).map(|_|())
 }
@@ -239,9 +245,12 @@ fn run()->Result<()>{
  .setup(|app|{
   let app_data=app.path().app_data_dir()?;let d=app_data.join("models");fs::create_dir_all(&d)?;
   let docs_path=app_data.join("documents.json");
-  let initial=models(&d)?.first().cloned();
+  let model_state_path=app_data.join("current-model.txt");
+  let initial_models=models(&d)?;
+  let saved_id=load_model_id(&model_state_path);
+  let initial= saved_id.as_deref().and_then(|id|initial_models.iter().find(|m|m.id==id).cloned()).or_else(||initial_models.first().cloned());
   let initial_docs=load_docs(&docs_path);
-  let s=Arc::new(AppState{model:RwLock::new(initial),config:RwLock::new(Config::default()),child:Mutex::new(None),dir:d,docs_path,docs:RwLock::new(initial_docs)});
+  let s=Arc::new(AppState{model:RwLock::new(initial),config:RwLock::new(Config::default()),child:Mutex::new(None),dir:d,docs_path,model_state_path,docs:RwLock::new(initial_docs)});
   app.manage(s.clone());
   if s.model.blocking_read().is_some(){
    let h=app.handle().clone();let ss=s.clone();
