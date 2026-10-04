@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://belingamougoualexis-ctrl.github.io/Vanelle-os-/sitemap.xml
