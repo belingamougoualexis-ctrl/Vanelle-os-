@@ -5,6 +5,7 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/vanelle-store-pages.yml'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,25 +16,19 @@ concurrency:
   cancel-in-progress: true
 jobs:
   deploy:
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Pages
+      - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Prepare site
-        run: |
-          mkdir -p _site
-          cp site/index.html _site/index.html
-          cp site/robots.txt _site/robots.txt
-          cp site/sitemap.xml _site/sitemap.xml
-      - name: Upload Pages artifact
+      - name: Upload complete store
         uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: './site'
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
