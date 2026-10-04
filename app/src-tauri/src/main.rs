@@ -886,7 +886,7 @@ async fn import_vision_test_dataset(s:State<'_,Arc<AppState>>,project_id:String,
 
 #[tauri::command]
 async fn run_vision_test(app:tauri::AppHandle,s:State<'_,Arc<AppState>>,project_id:String)->Result<serde_json::Value,String>{
-    let v=load_vision_info(&s.projects_dir,&project_id);let checkpoint=v.checkpoint_path.ok_or("Aucun modèle vision entraîné à tester.")?;let t=load_vision_test_info(&s.projects_dir,&project_id);let dataset=t.dataset_path.ok_or("Importez d'abord un benchmark de test.")?;
+    let v=load_vision_info(&s.projects_dir,&project_id);let checkpoint=v.checkpoint_path.ok_or("Aucun modèle vision entraîné à tester.")?;let t=load_vision_test_info(&s.projects_dir,&project_id);let dataset=t.dataset_path.clone().ok_or("Importez d'abord un benchmark de test.")?;
     let out=s.projects_dir.join(&project_id).join("vision-test-report.json");let args=vec!["--dataset".into(),dataset.clone(),"--checkpoint".into(),checkpoint,"--output".into(),out.to_string_lossy().into_owned()];let r=run_python(&app,"vision_test.py",&args).await.map_err(|e|e.to_string())?;
     if !r.status.success(){return Err(String::from_utf8_lossy(&r.stderr).trim().to_string());}let report:serde_json::Value=serde_json::from_slice(&fs::read(&out).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let mut tt=t;tt.report_path=Some(out.to_string_lossy().into_owned());tt.accuracy=report.get("accuracy").and_then(|x|x.as_f64());tt.errors=report.get("errors").and_then(|x|x.as_u64()).unwrap_or(0) as usize;tt.status=if tt.errors==0{"Benchmark réussi — aucune erreur détectée".into()}else{"Erreurs détectées — diagnostic disponible".into()};save_vision_test_info(&s.projects_dir,&tt).map_err(|e|e.to_string())?;Ok(report)
 }
