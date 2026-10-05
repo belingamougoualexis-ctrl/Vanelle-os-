@@ -33,6 +33,7 @@ function App(){
   const [evalReport,setEvalReport]=useState(null),[trainingLog,setTrainingLog]=useState([]),[training,setTraining]=useState(false);
   const [hfRuntime,setHfRuntime]=useState(null);
   const [vision,setVision]=useState(null),[visionReport,setVisionReport]=useState(null),[visionPrediction,setVisionPrediction]=useState(null),[visionRuntime,setVisionRuntime]=useState(null),[visionTest,setVisionTest]=useState(null),[visionTestReport,setVisionTestReport]=useState(null);
+  const [evolutionRunning,setEvolutionRunning]=useState(false),[evolutionReport,setEvolutionReport]=useState(null);
 
   const active=useMemo(()=>sessions.find(x=>x.id===activeId)||sessions[0],[sessions,activeId]);
   const project=useMemo(()=>projects.find(p=>p.id===project_id)||null,[projects,project_id]);
@@ -223,6 +224,53 @@ function App(){
       setDataset(r);await loadProjects();setStatus(`Dataset enrichi · ${r.examples} exemples — relancez le training`);
     }catch(e){setStatus(String(e))}
   }
+  const evolutionTests=objective=>[
+    {name:"Objectif — cas inédit",persona:"utilisateur réel",prompt:"Pour le même objectif, donne une solution concrète à ce nouveau cas : "+objective,must_contain:[],must_not_contain:["je suis un test"],min_chars:80,max_chars:3000},
+    {name:"Robustesse — contraintes",persona:"utilisateur avec contraintes",prompt:"Réponds à cette demande liée à l'objectif : "+objective+". Prends en compte plusieurs contraintes et signale les informations manquantes.",must_contain:[],must_not_contain:[],min_chars:80,max_chars:3000},
+    {name:"Généralisation",persona:"nouvel utilisateur",prompt:"Explique une autre manière d'appliquer cet objectif à une situation nouvelle : "+objective,must_contain:[],must_not_contain:[],min_chars:80,max_chars:3000}
+  ];
+
+  async function waitTraining(projectId){
+    const {listen}=await import("@tauri-apps/api/event");
+    return new Promise(async(resolve,reject)=>{
+      let finished=false;
+      const off=await listen("training://done",event=>{
+        const p=event.payload||{};
+        if(p.project_id!==projectId)return;
+        finished=true;off();
+        if(Number(p.code)===0)resolve(p);else reject(new Error("Entraînement échoué (code "+p.code+")"));
+      });
+      try{await invoke("start_training",{project_id:projectId})}
+      catch(e){if(!finished){off();reject(e)}}
+    });
+  }
+
+  async function runEvolution(){
+    if(!project||!project.dataset_path||evolutionRunning)return;
+    setEvolutionRunning(true);setEvolutionReport(null);setStatus("AI Evolution · benchmark indépendant de départ…");
+    try{
+      const tests=evolutionTests(project.objective);
+      const before=await invoke("evaluate_project",{project_id:project.id,tests});
+      if(before.failed===0){
+        setEvolutionReport({before,after:null,improved:false,message:"Le modèle réussit déjà le benchmark indépendant."});
+        setStatus("AI Evolution · aucune correction nécessaire");return;
+      }
+      setStatus("AI Evolution · création de corrections…");
+      const correction=await invoke("generate_corrections",{project_id:project.id,failures:before.results});
+      setDataset(correction);await loadProjects();
+      setStatus("AI Evolution · réentraînement réel…");
+      await waitTraining(project.id);
+      await loadProjects();
+      setStatus("AI Evolution · second benchmark indépendant…");
+      const after=await invoke("evaluate_project",{project_id:project.id,tests});
+      const improved=after.average_score>before.average_score;
+      setEvolutionReport({before,after,improved,corrections:Math.max(0,(correction.examples||0)-(project.examples||0)),message:improved?"Amélioration vérifiée sur le benchmark indépendant.":"Aucune amélioration vérifiée : Vanelle ne déclare pas la nouvelle version meilleure."});
+      setEvalReport(after);
+      setStatus(improved?"AI Evolution · amélioration vérifiée":"AI Evolution · résultat non amélioré");
+    }catch(e){setEvolutionReport({error:String(e)});setStatus("AI Evolution · "+String(e))}
+    finally{setEvolutionRunning(false);await loadProjects()}
+  }
+
   async function mergeFinal(){
     if(!project?.adapter_path)return;
     try{
@@ -275,7 +323,8 @@ function App(){
         <button className={tab==="evaluation"?"active":""} onClick={()=>setTab("evaluation")}><span>06</span> Evaluation Lab</button>
         <button className={tab==="chat"?"active":""} onClick={()=>setTab("chat")}><span>07</span> Chat local</button>
         <button className={tab==="vision"?"active":""} onClick={()=>setTab("vision")}><span>08</span> Vision Lab</button>
-      </nav>
+              <button className={tab==="builder"?"active":""} onClick={()=>setTab("builder")}><span>03</span> Créer une IA</button>
+</nav>
       <div className="side-bottom">
         <button onClick={addDocument}>Ajouter un document</button>
         <button onClick={addMemory}>Mémoire locale</button>
@@ -307,6 +356,22 @@ function App(){
         <div className="section-head"><div><span className="section-kicker">PIPELINE</span><h3>De l'idée au modèle exportable</h3></div><button className="dark-btn" onClick={()=>setTab("projects")}>Ouvrir les projets</button></div>
         <div className="pipeline"><div><i>01</i><b>Objectif</b><span>Définir ce que l'IA doit réellement apprendre.</span></div><div><i>02</i><b>Modèle</b><span>Analyser le modèle importé et ses contraintes.</span></div><div><i>03</i><b>Données</b><span>Nettoyer et normaliser vos exemples.</span></div><div><i>04</i><b>Training</b><span>Adapter le modèle avec LoRA/SFT.</span></div><div><i>05</i><b>Evaluation</b><span>Le tester sur des scénarios comportementaux.</span></div><div><i>06</i><b>Export</b><span>Récupérer le projet et l'adaptateur.</span></div></div>
       </section>}
+
+      {tab==="builder"&&<section className="page two-col">
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">AI BUILDER</span><h3>Créer une IA</h3></div></div>
+          <p>Créez une IA locale à partir d'un modèle accessible sur votre machine, de vos données et d'un objectif précis.</p>
+          <label>Nom de l'IA<input value={projectName} onChange={e=>setProjectName(e.target.value)} placeholder="Ex. Assistant support"/></label>
+          <label>Objectif<textarea value={objective} onChange={e=>setObjective(e.target.value)} placeholder="Que doit apprendre cette IA ?"/></label>
+          <label>Modèle de base<select value={model} onChange={e=>chooseModel(e.target.value)}><option value="">Sélectionner…</option>{models.map(m=><option key={m.id} value={m.id}>{m.id} · {m.format}</option>)}</select></label>
+          <button className="primary-btn" onClick={async()=>{await createProject();setTab("data")}} disabled={!model||!projectName.trim()||!objective.trim()}>Créer et préparer les données</button>
+        </div>
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">WORKFLOW</span><h3>De l'idée à l'IA</h3></div></div>
+          <div className="pipeline"><div><i>01</i><b>Objectif</b><span>Définir la compétence.</span></div><div><i>02</i><b>Données</b><span>Importer les exemples.</span></div><div><i>03</i><b>Training</b><span>Entraîner réellement.</span></div><div><i>04</i><b>Tests</b><span>Mesurer objectivement.</span></div><div><i>05</i><b>Evolution</b><span>Corriger puis vérifier sur un benchmark indépendant.</span></div></div>
+          {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">IA ACTIVE</span><h3>{project.name}</h3></div><button onClick={()=>setTab("evaluation")}>Tester</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span></div></div>}
+        </div>
+      </section>
 
       {tab==="projects"&&<section className="page two-col">
         <div className="panel">
@@ -353,6 +418,13 @@ function App(){
 
       {tab==="evaluation"&&<section className="page">
         <div className="section-head"><div><span className="section-kicker">EVALUATION LAB</span><h3>Tester l'IA comme un utilisateur</h3><p>Vanelle envoie plusieurs scénarios à l'IA et vérifie objectivement les réponses et les contraintes définies.</p></div><div className="inline-actions"><button onClick={improve} disabled={!evalReport?.failed}>Corriger les échecs</button><button className="primary-btn" onClick={evaluate} disabled={!project}>Lancer les tests</button></div></div>
+        <div className="panel">
+          <div className="panel-head"><div><span className="section-kicker">AI EVOLUTION</span><h3>Améliorer automatiquement</h3></div><button className="primary-btn" onClick={runEvolution} disabled={!project||!project.dataset_path||evolutionRunning}>{evolutionRunning?"Évolution en cours…":"Lancer AI Evolution"}</button></div>
+          <p>Benchmark indépendant → détection des erreurs → corrections → réentraînement réel → nouveau benchmark. Vanelle ne considère l'IA meilleure que si le score augmente réellement.</p>
+          {evolutionReport?.error&&<div className="warning">{evolutionReport.error}</div>}
+          {evolutionReport?.before&&<div className="stat-grid"><div className="stat"><span>AVANT</span><b>{evolutionReport.before.average_score}%</b><small>{evolutionReport.before.failed} échec(s)</small></div>{evolutionReport.after&&<div className="stat"><span>APRÈS</span><b>{evolutionReport.after.average_score}%</b><small>{evolutionReport.after.failed} échec(s)</small></div>}<div className="stat"><span>RÉSULTAT</span><b>{evolutionReport.after?(evolutionReport.improved?"AMÉLIORÉ":"NON AMÉLIORÉ"):"—"}</b><small>{evolutionReport.corrections||0} correction(s)</small></div></div>}
+          {evolutionReport?.message&&<div className={evolutionReport.improved?"runtime-box ready":"runtime-box"}><b>{evolutionReport.message}</b></div>}
+        </div>
         <div className="scenario-grid">{tests.map((t,i)=><div className="scenario" key={i}><span>{String(i+1).padStart(2,"0")}</span><b>{t.name}</b><p>{t.persona}</p><small>{t.prompt}</small></div>)}</div>
         {evalReport&&<div className="report"><div className="report-head"><div><span className="section-kicker">TEST REPORT</span><h3>{evalReport.average_score}% score moyen</h3></div><span>{evalReport.passed} réussis · {evalReport.failed} échecs</span></div>{evalReport.results.map((r,i)=><details className={r.passed?"result pass":"result fail"} key={i}><summary><b>{r.name}</b><span>{r.score}%</span></summary><p>{r.response}</p>{r.reasons.length>0&&<ul>{r.reasons.map((x,n)=><li key={n}>{x}</li>)}</ul>}</details>)}</div>}
       </section>}
