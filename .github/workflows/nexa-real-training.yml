@@ -2,6 +2,8 @@ name: NEXA real training validation
 on:
   push:
     branches: [nexa-general-ai]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 jobs:
   train-and-test:
