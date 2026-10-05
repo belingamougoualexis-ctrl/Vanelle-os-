@@ -15,20 +15,7 @@ jobs:
       - name: Install ML stack
         run: pip install -r nexa/requirements.txt
       - name: Validate datasets
-        run: python - <<'PY'
-          import json
-          for p in ["nexa/data/train.jsonl","nexa/data/test.jsonl"]:
-              with open(p,encoding="utf-8") as f:
-                  rows=[json.loads(x) for x in f if x.strip()]
-              assert rows, p
-          train=[json.loads(x) for x in open("nexa/data/train.jsonl",encoding="utf-8") if x.strip()]
-          test=[json.loads(x) for x in open("nexa/data/test.jsonl",encoding="utf-8") if x.strip()]
-          assert len(train) >= 20 and len(test) >= 10
-          train_users={r["messages"][1]["content"] for r in train}
-          test_users={r["messages"][1]["content"] for r in test}
-          assert train_users.isdisjoint(test_users), "test leakage detected"
-          print("train",len(train),"test",len(test))
-          PY
+        run: python -c 'import json; tr=[json.loads(x) for x in open("nexa/data/train.jsonl",encoding="utf-8") if x.strip()]; te=[json.loads(x) for x in open("nexa/data/test.jsonl",encoding="utf-8") if x.strip()]; assert len(tr)>=20 and len(te)>=10; assert {x["messages"][1]["content"] for x in tr}.isdisjoint({x["messages"][1]["content"] for x in te}); print("train",len(tr),"test",len(te))'
       - name: Train NEXA LoRA
         run: python nexa/train.py --train nexa/data/train.jsonl --output nexa/output/adapter --epochs 1 --max-length 384
       - name: Independent evaluation
