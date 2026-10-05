@@ -371,7 +371,7 @@ function App(){
           <div className="pipeline"><div><i>01</i><b>Objectif</b><span>Définir la compétence.</span></div><div><i>02</i><b>Données</b><span>Importer les exemples.</span></div><div><i>03</i><b>Training</b><span>Entraîner réellement.</span></div><div><i>04</i><b>Tests</b><span>Mesurer objectivement.</span></div><div><i>05</i><b>Evolution</b><span>Corriger puis vérifier sur un benchmark indépendant.</span></div></div>
           {project&&<div className="project-detail"><div className="detail-title"><div><span className="section-kicker">IA ACTIVE</span><h3>{project.name}</h3></div><button onClick={()=>setTab("evaluation")}>Tester</button></div><p>{project.objective}</p><div className="chip-row"><span>{project.model_id}</span><span>{project.examples} exemples</span><span>{project.status}</span></div></div>}
         </div>
-      </section>
+      </section>}
 
       {tab==="projects"&&<section className="page two-col">
         <div className="panel">
