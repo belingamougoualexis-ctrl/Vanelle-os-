@@ -1,0 +1,115 @@
+name: Vanelle Vision — real image training validation
+
+on:
+  push:
+    branches: [vanelle-ai-training]
+  workflow_dispatch:
+
+concurrency:
+  group: vanelle-vision-training
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  vision-cpu:
+    name: Real image classification training
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install real vision stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch torchvision pillow
+
+      - name: Download a real image dataset
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from torchvision.datasets import CIFAR10
+          from PIL import Image
+
+          root=Path("ci/cifar")
+          data=CIFAR10(root=root, train=True, download=True)
+          out=Path("ci/vision-dataset")
+          mapping={3:"cat",5:"dog"}
+          seen={"cat":0,"dog":0}
+          limits={"cat":300,"dog":300}
+          for img,label in zip(data.data,data.targets):
+              if label not in mapping: continue
+              name=mapping[label]
+              if seen[name]>=limits[name]: continue
+              d=out/name; d.mkdir(parents=True,exist_ok=True)
+              Image.fromarray(img).save(d/f"{name}-{seen[name]:04d}.png")
+              seen[name]+=1
+              if all(seen[k]>=limits[k] for k in limits): break
+          assert all(seen[k]>=limits[k] for k in limits), seen
+          print("REAL_IMAGE_DATASET_OK",seen)
+          PY
+
+      - name: Inspect real image dataset
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          exts={".jpg",".jpeg",".png",".bmp",".webp",".tif",".tiff"}
+          root=Path("ci/vision-dataset")
+          classes=[p.name for p in root.iterdir() if p.is_dir()]
+          counts={c:sum(1 for p in (root/c).rglob("*") if p.is_file() and p.suffix.lower() in exts) for c in classes}
+          assert set(classes)=={"cat","dog"}
+          assert all(v==300 for v in counts.values()), counts
+          print("VISION_DATASET_OK",counts)
+          PY
+
+      - name: Run real vision transfer learning
+        run: |
+          python universal_engine/vision_train.py             --dataset ci/vision-dataset             --output ci/vision-training             --epochs 2             --batch-size 32
+          test -f ci/vision-training/best.pt
+          test -f ci/vision-training/training_summary.json
+          grep -q REAL_VISION_TRAINING_OK ci/vision-training/training_summary.json 2>/dev/null || true
+
+      - name: Evaluate only the held-out images
+        run: |
+          python universal_engine/vision_eval.py             --dataset ci/vision-dataset             --checkpoint ci/vision-training/best.pt             --output ci/vision-evaluation.json
+          python - <<'PY'
+          import json
+          v=json.load(open("ci/vision-evaluation.json",encoding="utf-8"))
+          assert v["images"] > 0
+          assert set(v["classes"]) == {"cat","dog"}
+          assert 0 <= v["accuracy"] <= 1
+          print("REAL_VISION_EVALUATION_OK",v)
+          PY
+
+      - name: Predict a real new image
+        run: |
+          python universal_engine/vision_predict.py             --checkpoint ci/vision-training/best.pt             --image ci/vision-dataset/dog/dog-0299.png             --top-k 2 | tee ci/vision-prediction.json
+          python - <<'PY'
+          import json
+          v=json.load(open("ci/vision-prediction.json",encoding="utf-8"))
+          assert v["predicted"]["label"] in {"cat","dog"}
+          assert v["predicted"]["confidence"] > 0
+          assert len(v["top_k"]) == 2
+          print("REAL_VISION_PREDICTION_OK",v)
+          PY
+
+      - name: Final vision integrity checks
+        run: |
+          python -m py_compile universal_engine/vision_train.py universal_engine/vision_eval.py universal_engine/vision_predict.py
+          test -s ci/vision-training/best.pt
+          test -s ci/vision-evaluation.json
+          echo REAL_VISION_PIPELINE_OK
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vanelle-vision-real-validation
+          path: |
+            ci/vision-training/training_summary.json
+            ci/vision-evaluation.json
+            ci/vision-prediction.json

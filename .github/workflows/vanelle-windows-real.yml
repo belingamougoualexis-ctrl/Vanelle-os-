@@ -1,0 +1,128 @@
+name: Vanelle Windows — real build
+
+on:
+  push:
+    branches: [vanelle-ai-training]
+  workflow_dispatch:
+
+
+concurrency:
+  group: vanelle-windows-training
+  cancel-in-progress: true
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+
+      - name: Build Vanelle
+        shell: pwsh
+        run: ./scripts/build-vanelle.ps1
+
+      - name: Verify application and universal engine
+        shell: pwsh
+        run: |
+          $root = "out/src-tauri"
+          $release = "$root/target/x86_64-pc-windows-msvc/release"
+          if (!(Test-Path "$root/universal_engine/hf_train.py")) { throw "HF training engine missing" }
+          if (!(Test-Path "$root/universal_engine/hf_eval.py")) { throw "HF evaluation engine missing" }
+          if (!(Test-Path "$root/universal_engine/hf_chat.py")) { throw "HF chat engine missing" }
+          if (!(Test-Path "$root/universal_engine/hf_merge.py")) { throw "HF merge engine missing" }
+          $setup = Get-ChildItem "$release/bundle/nsis" -Filter *.exe -File -ErrorAction Stop | Select-Object -First 1
+          $app = Get-ChildItem $release -Filter "vanelle-local.exe" -File -ErrorAction Stop | Select-Object -First 1
+          if (!$setup) { throw "NSIS installer missing" }
+          if (!$app) { throw "Portable app missing" }
+          $setup | Select-Object FullName,Length
+          $app | Select-Object FullName,Length
+
+      - name: GGUF engine real smoke test
+        shell: pwsh
+        run: |
+          $model = "$env:RUNNER_TEMP/tinyllama-q2.gguf"
+          Invoke-WebRequest -Uri "https://huggingface.co/tensorblock/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/TinyLlama-1.1B-Chat-v1.0-Q2_K.gguf?download=true" -OutFile $model
+          if ((Get-Item $model).Length -lt 100000000) { throw "Real GGUF test model is incomplete" }
+          $cpu = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe" | Select-Object -First 1).FullName
+          $p = Start-Process -FilePath $cpu -ArgumentList @("-m",$model,"--host","127.0.0.1","--port","18281","--ctx-size","512","--n-gpu-layers","0") -PassThru -WindowStyle Hidden
+          try {
+            $ready=$false
+            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18281/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
+            if (!$ready) { throw "Real CPU engine did not become ready" }
+            $body = @{model="tinyllama";messages=@(@{role="user";content="Say TEST_VANELLE_OK"});max_tokens=16;temperature=0;stream=$false} | ConvertTo-Json -Depth 6
+            $resp=Invoke-RestMethod -Uri "http://127.0.0.1:18281/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            if ([string]::IsNullOrWhiteSpace([string]$resp.choices[0].message.content)) { throw "Real CPU chat returned empty output" }
+            Write-Host "REAL_GGUF_CHAT_OK"
+          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+
+      - name: Real GGUF LoRA training, adapter inference and merge
+        shell: pwsh
+        timeout-minutes: 35
+        run: |
+          $model = "$env:RUNNER_TEMP\qwen3-0.6b-q8.gguf"
+          $dataset = "$env:RUNNER_TEMP\vanelle-training.jsonl"
+          $adapter = "$env:RUNNER_TEMP\vanelle-trained-adapter.gguf"
+          $merged = "$env:RUNNER_TEMP\vanelle-merged.gguf"
+          Invoke-WebRequest -Uri "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf?download=true" -OutFile $model
+          if ((Get-Item $model).Length -lt 500000000) { throw "Qwen GGUF test model incomplete" }
+
+          @'
+          {"messages":[{"role":"user","content":"Quel est le code de validation Vanelle ?"},{"role":"assistant","content":"Le code de validation Vanelle est VANELLE_TRAIN_OK."}]}
+          {"messages":[{"role":"user","content":"Répète le code de validation."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
+          {"messages":[{"role":"user","content":"Donne uniquement le code."},{"role":"assistant","content":"VANELLE_TRAIN_OK."}]}
+          '@ | Set-Content -Path $dataset -Encoding utf8
+
+          $trainer = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-finetune-lora-*.exe" | Where-Object {$_.Name -notmatch "-vulkan-"} | Select-Object -First 1).FullName
+          $server = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-server-cpu-*.exe" | Select-Object -First 1).FullName
+          $exporter = (Get-ChildItem "out/src-tauri/binaries" -Filter "llama-export-lora-*.exe" | Where-Object {$_.Name -notmatch "-vulkan-"} | Select-Object -First 1).FullName
+          if (!$trainer -or !$server -or !$exporter) { throw "GGUF training binaries incomplete" }
+
+          & $trainer -m $model -f $dataset --output-adapter $adapter --assistant-loss-only -c 128 -b 1 -ub 1 -ngl 0 -fa off --lora-rank 4 --lora-alpha 8 --lora-modules "attn_q,attn_k,attn_v,attn_o" --learning-rate 1e-5 --num-epochs 1 --checkpoint-save-steps 1000
+          if ($LASTEXITCODE -ne 0) { throw "Real GGUF LoRA training failed" }
+          if (!(Test-Path $adapter) -or (Get-Item $adapter).Length -lt 10000) { throw "LoRA adapter missing or empty" }
+
+          $p = Start-Process -FilePath $server -ArgumentList @("-m",$model,"--lora",$adapter,"--alias","trained-test","--host","127.0.0.1","--port","18284","--ctx-size","256","--n-gpu-layers","0","--jinja") -PassThru -WindowStyle Hidden
+          try {
+            $ready=$false
+            1..120 | ForEach-Object { if (!$ready) { try { $r=Invoke-WebRequest "http://127.0.0.1:18284/health" -UseBasicParsing; if ($r.StatusCode -eq 200) {$ready=$true} } catch {}; Start-Sleep -Milliseconds 500 } }
+            if (!$ready) { throw "Server with LoRA not ready" }
+            $body=@{model="trained-test";messages=@(@{role="user";content="Quel est le code de validation Vanelle ? /no_think"});max_tokens=64;temperature=0;stream=$false}|ConvertTo-Json -Depth 6
+            $resp=Invoke-RestMethod -Uri "http://127.0.0.1:18284/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+            $content=[string]$resp.choices[0].message.content
+            $reasoning=[string]$resp.choices[0].message.reasoning_content
+            if ([string]::IsNullOrWhiteSpace($content) -and [string]::IsNullOrWhiteSpace($reasoning)) { throw "LoRA inference returned empty output" }
+            Write-Host "LoRA response content: $content"
+            Write-Host "LoRA response reasoning: $reasoning"
+            Write-Host "REAL_GGUF_LORA_INFERENCE_OK"
+          } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+
+          & $exporter -m $model --lora $adapter -o $merged
+          if ($LASTEXITCODE -ne 0) { throw "GGUF merge failed" }
+          if (!(Test-Path $merged) -or (Get-Item $merged).Length -lt 100000) { throw "Merged GGUF missing" }
+          Write-Host "REAL_GGUF_MERGE_OK"
+
+      - name: Publish Windows artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseDir = "release-assets"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+          $setup = Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" -Filter *.exe -File | Select-Object -First 1
+          $portable = Get-ChildItem "out/src-tauri/target/x86_64-pc-windows-msvc/release" -Filter "vanelle-local.exe" -File | Select-Object -First 1
+          Copy-Item $setup.FullName "$releaseDir/Vanelle-Local-Windows-x64-Setup.exe" -Force
+          Copy-Item $portable.FullName "$releaseDir/Vanelle-Local-Windows-x64-Portable.exe" -Force
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath "$releaseDir/Vanelle-Local-Windows-x64.zip" -Force
+          gh release delete vanelle-local-latest --yes --cleanup-tag 2>$null
+          gh release create vanelle-local-latest "$releaseDir/Vanelle-Local-Windows-x64-Setup.exe" "$releaseDir/Vanelle-Local-Windows-x64-Portable.exe" "$releaseDir/Vanelle-Local-Windows-x64.zip" --target $env:GITHUB_SHA --title "Vanelle Local Windows x64" --notes "Real build, AI Builder, AI Evolution, GGUF smoke validation, and training checks from GitHub Actions." --latest=false
