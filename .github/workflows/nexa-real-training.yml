@@ -1,0 +1,48 @@
+name: NEXA real training validation
+on:
+  push:
+    branches: [nexa-general-ai]
+  workflow_dispatch:
+jobs:
+  train-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ML stack
+        run: pip install -r nexa/requirements.txt
+      - name: Validate datasets
+        run: python - <<'PY'
+          import json
+          for p in ["nexa/data/train.jsonl","nexa/data/test.jsonl"]:
+              with open(p,encoding="utf-8") as f:
+                  rows=[json.loads(x) for x in f if x.strip()]
+              assert rows, p
+          train=[json.loads(x) for x in open("nexa/data/train.jsonl",encoding="utf-8") if x.strip()]
+          test=[json.loads(x) for x in open("nexa/data/test.jsonl",encoding="utf-8") if x.strip()]
+          assert len(train) >= 20 and len(test) >= 10
+          train_users={r["messages"][1]["content"] for r in train}
+          test_users={r["messages"][1]["content"] for r in test}
+          assert train_users.isdisjoint(test_users), "test leakage detected"
+          print("train",len(train),"test",len(test))
+          PY
+      - name: Train NEXA LoRA
+        run: python nexa/train.py --train nexa/data/train.jsonl --output nexa/output/adapter --epochs 1 --max-length 384
+      - name: Independent evaluation
+        run: python nexa/evaluate.py --base-model Qwen/Qwen2.5-0.5B-Instruct --adapter nexa/output/adapter --test nexa/data/test.jsonl --output nexa/output/report.json
+      - name: Print report
+        run: cat nexa/output/report.json
+      - name: Package NEXA
+        run: |
+          cp nexa/README.md nexa/output/README.md
+          cp nexa/data/test.jsonl nexa/output/benchmark.jsonl
+          tar -czf NEXA-v0.1-adapter.tar.gz -C nexa/output adapter report.json nexa_training.json README.md benchmark.jsonl
+      - name: Upload NEXA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXA-v0.1-adapter
+          path: NEXA-v0.1-adapter.tar.gz
+          retention-days: 30
