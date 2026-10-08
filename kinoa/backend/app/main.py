@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
+from pathlib import Path
 from .models import ProjectCreate, SceneCreate, FilmBibleUpdate, ScreenplaySceneCreate, SceneStatus
-from .store import create, load, save
+from .store import create, load, save, ROOT
 from .hardware import detect_hardware, wan22_readiness
 from .continuity import validate_scene
 from .orchestrator import Orchestrator
@@ -84,9 +85,11 @@ def generation_status(project_id:str):
 def export_assemble(project_id:str, payload:dict):
     try: p=load(project_id)
     except FileNotFoundError: raise HTTPException(404,"Project not found")
-    root=payload.get("project_root")
     files=payload.get("scene_files",[])
-    if not root or not files: raise HTTPException(400,"project_root and scene_files are required")
+    if not files: raise HTTPException(400,"scene_files are required")
+    if any(Path(str(name)).is_absolute() or ".." in Path(str(name)).parts for name in files):
+        raise HTTPException(400,"scene_files must be relative to the project media directory")
+    root=(ROOT / p.id).resolve()
     try:
         result=assemble_project(root,files,payload.get("output","exports/final.mp4"),int(payload.get("fps",24)),int(payload.get("width",1280)),int(payload.get("height",720)))
     except (ValueError,FileNotFoundError,RuntimeError) as exc:
