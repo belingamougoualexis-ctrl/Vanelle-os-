@@ -28,3 +28,5 @@ def build_scene_context(bible: dict[str,Any], previous: dict[str,Any] | None, sc
         "natural_faces":True,"credible_expressions":True,"realistic_motion":True,
         "stable_identity":True,"stable_clothing":True,"stable_objects":True,
         "plausible_physics":True,"cinematic_lighting":True}}
+
+# Empty optional scene fields inherit context rather than creating a false continuity break.
