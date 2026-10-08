@@ -3,9 +3,9 @@ import android.os.Bundle
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.graphics.Typeface
-import androidx.appcompat.app.AppCompatActivity
+import android.app.Activity
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(48,72,48,48) }
