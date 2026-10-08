@@ -3,6 +3,8 @@ from .models import ProjectCreate, SceneCreate, FilmBibleUpdate, ScreenplayScene
 from .store import create, load, save
 from .hardware import detect_hardware, wan22_readiness
 from .continuity import validate_scene
+from .orchestrator import Orchestrator
+from .video_engine import get_video_engine
 
 app = FastAPI(title="KINOA API", version="0.3.0")
 
@@ -55,6 +57,32 @@ def storyboard(project_id:str):
     try: p=load(project_id)
     except FileNotFoundError: raise HTTPException(404,"Project not found")
     return {"project_id":p.id,"scenes":[{"scene_id":s["scene_id"],"title":s["title"],"duration_seconds":s["target_duration_seconds"],"characters":s["characters"],"location":s["location"],"status":s["status"]} for s in p.screenplay]}
+
+@app.post("/api/projects/{project_id}/generation/plan")
+def generation_plan(project_id:str):
+    try: p=load(project_id)
+    except FileNotFoundError: raise HTTPException(404,"Project not found")
+    if not p.screenplay: raise HTTPException(400,"Screenplay is empty")
+    o=Orchestrator()
+    validation=o.validate(p.film_bible,p.screenplay)
+    if not validation["valid"]:
+        raise HTTPException(409,{"message":"Continuity validation failed","issues":validation["issues"]})
+    plan=o.plan(p.id,p.screenplay)
+    p.generation={"state":"planned","progress":0.0,"current_scene":None,"completed":0,"total":len(plan.scene_ids),"engine":"wan2.2-t2v-a14b","error":None}
+    p.checkpoint={"stage":"generation-plan","scene_ids":plan.scene_ids}
+    save(p)
+    return {"project_id":p.id,"plan":plan.__dict__,"validation":validation,"generation":p.generation}
+
+@app.get("/api/projects/{project_id}/generation")
+def generation_status(project_id:str):
+    try: p=load(project_id)
+    except FileNotFoundError: raise HTTPException(404,"Project not found")
+    return p.generation
+
+@app.get("/api/video-engine")
+def video_engine():
+    e=get_video_engine()
+    return {"engine":e.name,"readiness":e.readiness()}
 
 @app.post("/api/projects/{project_id}/scenes")
 def add_scene(project_id:str, req:SceneCreate):
