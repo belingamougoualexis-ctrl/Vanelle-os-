@@ -17,3 +17,11 @@ def test_real_ffmpeg_assembly_and_probe(tmp_path: Path):
     qa=validate_media(out,expected_fps=24)
     assert qa["valid"] is True
     assert qa["duration_seconds"] > 0.6
+
+
+def test_assembly_rejects_invalid_input(tmp_path: Path):
+    import pytest
+    from app.media import assemble_videos
+    bad=tmp_path/"bad.mp4"; bad.write_bytes(b"not media")
+    with pytest.raises(Exception):
+        assemble_videos([bad],tmp_path/"out.mp4",project_root=tmp_path)
