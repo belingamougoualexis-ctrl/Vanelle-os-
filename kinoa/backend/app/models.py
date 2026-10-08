@@ -57,3 +57,4 @@ class Project(BaseModel):
     screenplay: list[dict[str, Any]] = Field(default_factory=list)
     scenes: list[dict[str, Any]] = Field(default_factory=list)
     checkpoint: dict[str, Any] = Field(default_factory=dict)
+    generation: dict[str, Any] = Field(default_factory=lambda: {"state":"idle","progress":0.0,"current_scene":None,"completed":0,"total":0,"engine":None,"error":None})
