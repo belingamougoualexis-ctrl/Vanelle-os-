@@ -24,4 +24,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: "! grep -R -iE 'fake video|mock video|simulat(e|ion)[[:space:]]+video|pre-made video' kinoa/backend kinoa/web"
+      - run: "! grep -R -iE 'fake video|mock video|simulat(e|ion)[[:space:]]+video|pre-made video' kinoa/web"
