@@ -47,3 +47,21 @@ def test_film_bible_screenplay_storyboard():
     sb = client.get(f"/api/projects/{pid}/storyboard")
     assert sb.status_code == 200
     assert sb.json()["scenes"][0]["scene_id"] == "scene-001"
+
+def test_generation_plan_and_engine_status():
+    r = client.post("/api/projects", json={"idea":"Voyage sous la pluie"})
+    assert r.status_code == 201
+    pid = r.json()["id"]
+    s = client.post(f"/api/projects/{pid}/screenplay", json={
+        "title":"Départ","location":"Gare","characters":["Maya"],
+        "action":"Maya quitte la gare sous la pluie.","target_duration_seconds":8
+    })
+    assert s.status_code == 200
+    plan = client.post(f"/api/projects/{pid}/generation/plan")
+    assert plan.status_code == 200
+    assert plan.json()["generation"]["state"] == "planned"
+    status = client.get(f"/api/projects/{pid}/generation")
+    assert status.status_code == 200
+    engine = client.get("/api/video-engine")
+    assert engine.status_code == 200
+    assert engine.json()["engine"] == "wan2.2-t2v-a14b"
