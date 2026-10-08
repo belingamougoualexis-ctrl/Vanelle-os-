@@ -18,6 +18,30 @@ class SceneCreate(BaseModel):
     target_duration_seconds:float=Field(default=8,gt=0,le=600)
     dependencies:list[str]=Field(default_factory=list)
 
+class FilmBibleUpdate(BaseModel):
+    concept:str|None=None
+    synopsis:str|None=None
+    themes:list[str]|None=None
+    world:dict[str,Any]|None=None
+    characters:list[dict[str,Any]]|None=None
+    locations:list[dict[str,Any]]|None=None
+    visual:dict[str,Any]|None=None
+    continuity_rules:list[str]|None=None
+
+class ScreenplaySceneCreate(BaseModel):
+    scene_id:str|None=None
+    title:str=Field(min_length=1,max_length=200)
+    location:str=""
+    time_of_day:str="day"
+    characters:list[str]=Field(default_factory=list)
+    action:str=""
+    dialogue:str=""
+    atmosphere:str=""
+    camera:str=""
+    visual_style:str=""
+    target_duration_seconds:float=Field(default=8,gt=0,le=600)
+    dependencies:list[str]=Field(default_factory=list)
+
 class ProjectCreate(BaseModel):
     idea: str = Field(min_length=1, max_length=10000)
     title: str | None = Field(default=None, max_length=200)
