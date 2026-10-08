@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from .models import ProjectCreate, SceneCreate, FilmBibleUpdate, ScreenplaySceneCreate
+from .models import ProjectCreate, SceneCreate, FilmBibleUpdate, ScreenplaySceneCreate, SceneStatus
 from .store import create, load, save
 from .hardware import detect_hardware, wan22_readiness
 from .continuity import validate_scene
@@ -44,7 +44,7 @@ def add_screenplay_scene(project_id:str, req:ScreenplaySceneCreate):
     except FileNotFoundError: raise HTTPException(404,"Project not found")
     scene=req.model_dump()
     scene["scene_id"]=scene["scene_id"] or f"scene-{len(p.screenplay)+1:03d}"
-    scene["status"]=SceneStatus.planned.value if hasattr(SceneStatus,"planned") else "planned"
+    scene["status"]=SceneStatus.planned.value
     scene["video_prompt"]=build_video_prompt(p,scene)
     p.screenplay.append(scene)
     p.checkpoint={"stage":"screenplay","last_scene_id":scene["scene_id"]}
