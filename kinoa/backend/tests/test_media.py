@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 from app.media import ffmpeg_available, ffprobe_available, assemble_videos, validate_media
+from app.audio import mux_audio
 
 def test_media_tools_are_reported():
     assert ffmpeg_available() is True
@@ -25,3 +26,13 @@ def test_assembly_rejects_invalid_input(tmp_path: Path):
     bad=tmp_path/"bad.mp4"; bad.write_bytes(b"not media")
     with pytest.raises(Exception):
         assemble_videos([bad],tmp_path/"out.mp4",project_root=tmp_path)
+
+
+def test_real_audio_mux(tmp_path: Path):
+    video=tmp_path/"video.mp4"; audio=tmp_path/"audio.wav"; out=tmp_path/"muxed.mp4"
+    subprocess.run(["ffmpeg","-y","-hide_banner","-loglevel","error","-f","lavfi","-i","color=c=black:s=320x180:r=24","-t","0.5","-an",str(video)],check=True)
+    subprocess.run(["ffmpeg","-y","-hide_banner","-loglevel","error","-f","lavfi","-i","sine=frequency=440:duration=0.5","-c:a","pcm_s16le",str(audio)],check=True)
+    result=mux_audio(video,audio,out,project_root=tmp_path)
+    assert out.exists() and out.stat().st_size > 0
+    qa=validate_media(out,expected_fps=24)
+    assert qa["valid"] is True
