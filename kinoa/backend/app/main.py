@@ -128,6 +128,8 @@ def generation_status(project_id:str):
 def export_assemble(project_id:str, payload:dict):
     try: p=load(project_id)
     except FileNotFoundError: raise HTTPException(404,"Project not found")
+    if p.generation.get("state") not in ("planned","completed","idle"):
+        raise HTTPException(409,"Project generation is not in an exportable state")
     files=payload.get("scene_files",[])
     if not files: raise HTTPException(400,"scene_files are required")
     if any(Path(str(name)).is_absolute() or ".." in Path(str(name)).parts for name in files):
