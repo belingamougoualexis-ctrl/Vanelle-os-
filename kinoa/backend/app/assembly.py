@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
-from .media import assemble_videos
+from .media import assemble_videos, validate_media
 from .audio import mux_audio
 
 def assemble_project(project_root: str | Path, scene_files: list[str | Path], output: str | Path,
@@ -19,7 +19,7 @@ def assemble_project(project_root: str | Path, scene_files: list[str | Path], ou
         muxed=root / (video_output.stem + "_audio.mp4")
         mux_audio(video_output, audio_file, muxed, project_root=root)
         final_output=muxed
-    result["output"]=str(final_output)
+    final_qa=validate_media(final_output, expected_fps=fps)\n    if not final_qa["valid"]:\n        raise RuntimeError("Final export failed QA: " + ", ".join(final_qa["errors"]))\n    result["output"]=str(final_output)\n    result["final_qa"]=final_qa
     result["pipeline"]={"intro_included":intro_file is not None,
                         "audio":"muxed" if audio_file is not None else "not configured",
                         "qa":"ffprobe"}
