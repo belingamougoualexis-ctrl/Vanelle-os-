@@ -5,6 +5,7 @@ from .hardware import detect_hardware, wan22_readiness
 from .continuity import validate_scene
 from .orchestrator import Orchestrator
 from .video_engine import get_video_engine
+from .assembly import assemble_project
 
 app = FastAPI(title="KINOA API", version="0.3.0")
 
@@ -78,6 +79,21 @@ def generation_status(project_id:str):
     try: p=load(project_id)
     except FileNotFoundError: raise HTTPException(404,"Project not found")
     return p.generation
+
+@app.post("/api/projects/{project_id}/export/assemble")
+def export_assemble(project_id:str, payload:dict):
+    try: p=load(project_id)
+    except FileNotFoundError: raise HTTPException(404,"Project not found")
+    root=payload.get("project_root")
+    files=payload.get("scene_files",[])
+    if not root or not files: raise HTTPException(400,"project_root and scene_files are required")
+    try:
+        result=assemble_project(root,files,payload.get("output","exports/final.mp4"),int(payload.get("fps",24)),int(payload.get("width",1280)),int(payload.get("height",720)))
+    except (ValueError,FileNotFoundError,RuntimeError) as exc:
+        raise HTTPException(422,str(exc))
+    p.checkpoint={"stage":"export-assembled","output":result["output"],"qa":result["qa"]}
+    save(p)
+    return result
 
 @app.get("/api/video-engine")
 def video_engine():
