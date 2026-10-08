@@ -1,12 +1,12 @@
 const API=window.KINOA_API||"http://localhost:8000";
-const $=id=>document.getElementById(id);
-$("projectForm").addEventListener("submit",async e=>{
- e.preventDefault(); $("status").textContent="CREATING"; $("result").textContent="Création et sauvegarde du projet...";
- try{
-  const r=await fetch(API+"/api/projects",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-   idea:$("idea").value,title:$("title").value||null,genre:$("genre").value,duration_minutes:Number($("duration").value),visual_style:$("style").value
-  })});
-  const data=await r.json(); if(!r.ok) throw new Error(data.detail||"API error");
-  $("status").textContent="READY"; $("result").textContent=JSON.stringify({id:data.id,title:data.title,status:data.status,film_bible:data.film_bible},null,2);
- }catch(err){$("status").textContent="ERROR";$("result").textContent=err.message}
-});
+const $=id=>document.getElementById(id); let projectId=null; let timer=null;
+function setStatus(v){$("status").textContent=v}
+function show(view){document.querySelectorAll(".view").forEach(x=>x.classList.toggle("active",x.id===view));document.querySelectorAll(".nav").forEach(x=>x.classList.toggle("active",x.dataset.view===view))}
+document.querySelectorAll(".nav").forEach(b=>b.addEventListener("click",()=>{show(b.dataset.view); if(b.dataset.view==="storyboard")loadStoryboard(); if(b.dataset.view==="generation")pollGeneration();}));
+async function api(path,opts){const r=await fetch(API+path,opts);let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.detail||"Erreur API");return d}
+$("projectForm").addEventListener("submit",async e=>{e.preventDefault();setStatus("CREATING");$("result").textContent="Création et sauvegarde...";try{const d=await api("/api/projects",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({idea:$("idea").value,title:$("title").value||null,genre:$("genre").value,duration_minutes:Number($("duration").value),visual_style:$("style").value})});projectId=d.id;localStorage.setItem("kinoaProjectId",projectId);setStatus("READY");$("result").textContent=JSON.stringify({id:d.id,title:d.title,status:d.status,film_bible:d.film_bible},null,2);show("studio");loadEngine();}catch(err){setStatus("ERROR");$("result").textContent=err.message}});
+async function loadEngine(){try{$("engine").textContent=JSON.stringify(await api("/api/video-engine"),null,2)}catch(e){$("engine").textContent=e.message}}
+async function loadStoryboard(){if(!projectId){$("storyboardList").innerHTML="<p class='empty'>Aucun projet actif.</p>";return}try{const d=await api("/api/projects/"+projectId+"/storyboard");$("storyboardList").innerHTML=d.scenes.length?d.scenes.map(s=>`<article class="scene"><b>${s.scene_id}</b><h3>${s.title}</h3><p>${s.location} · ${s.duration_seconds}s · ${s.status}</p></article>`).join(""):"<p class='empty'>Aucune scène.</p>"}catch(e){$("storyboardList").textContent=e.message}}
+async function pollGeneration(){if(!projectId)return;clearInterval(timer);const tick=async()=>{try{const d=await api("/api/projects/"+projectId+"/generation");$("genState").textContent=d.state;$("genProgress").textContent=(d.progress||0)+"%";$("genScene").textContent=d.current_scene||"—";$("bar").style.width=Math.min(100,d.progress||0)+"%";$("generationNote").textContent=d.error||"État lu depuis le projet, sans minuterie artificielle."}catch(e){$("generationNote").textContent=e.message}};await tick();timer=setInterval(tick,3000)}
+$("loadProject").addEventListener("click",()=>{loadEngine();loadStoryboard()});
+projectId=localStorage.getItem("kinoaProjectId"); if(projectId)loadEngine();
