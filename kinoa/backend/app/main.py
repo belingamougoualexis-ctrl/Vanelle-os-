@@ -136,7 +136,10 @@ def export_assemble(project_id:str, payload:dict):
         raise HTTPException(400,"scene_files must be relative to the project media directory")
     root=(ROOT / p.id).resolve()
     try:
-        result=assemble_project(root,files,payload.get("output","exports/final.mp4"),int(payload.get("fps",24)),int(payload.get("width",1280)),int(payload.get("height",720)))
+        audio_file=payload.get("audio_file")
+    if audio_file is not None and (Path(str(audio_file)).is_absolute() or ".." in Path(str(audio_file)).parts):
+        raise HTTPException(400,"audio_file must be relative to the project media directory")
+    result=assemble_project(root,files,payload.get("output","exports/final.mp4"),int(payload.get("fps",24)),int(payload.get("width",1280)),int(payload.get("height",720)),audio_file=audio_file)
     except (ValueError,FileNotFoundError,RuntimeError) as exc:
         raise HTTPException(422,str(exc))
     p.checkpoint={"stage":"export-assembled","output":result["output"],"qa":result["qa"]}
