@@ -36,3 +36,14 @@ def test_real_audio_mux(tmp_path: Path):
     assert out.exists() and out.stat().st_size > 0
     qa=validate_media(out,expected_fps=24)
     assert qa["valid"] is True
+
+
+def test_project_audio_assembly_imports_real_mux(tmp_path: Path):
+    from app.assembly import assemble_project
+    video=tmp_path/"scene.mp4"; audio=tmp_path/"audio.wav"
+    subprocess.run(["ffmpeg","-y","-hide_banner","-loglevel","error","-f","lavfi","-i","color=c=black:s=320x180:r=24","-t","0.5","-an",str(video)],check=True)
+    subprocess.run(["ffmpeg","-y","-hide_banner","-loglevel","error","-f","lavfi","-i","sine=frequency=440:duration=0.5","-c:a","pcm_s16le",str(audio)],check=True)
+    result=assemble_project(tmp_path,[video],"exports/final.mp4",audio_file=audio)
+    assert Path(result["output"]).exists()
+    assert result["pipeline"]["audio"]=="muxed"
+    assert validate_media(result["output"])["valid"] is True
