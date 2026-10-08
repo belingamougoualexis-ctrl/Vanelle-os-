@@ -44,7 +44,7 @@ class Wan22Engine(VideoEngine):
         status = self.readiness()
         if not status["ready"]:
             raise RuntimeError(f'Wan2.2 unavailable: {status["reason"]}')
-        raise NotImplementedError("Wan2.2 runtime adapter is not executed until its exact installed model/runtime is validated.")
+        raise RuntimeError("Wan2.2 runtime adapter is not installed/validated on this machine; generation was not executed.")
 
 def get_video_engine(name: str = "wan2.2-t2v-a14b", model_path: str | None = None) -> VideoEngine:
     if name == "wan2.2-t2v-a14b":
