@@ -18,6 +18,8 @@ jobs:
       - run: ffmpeg -version
       - run: ffprobe -version
       - run: PYTHONPATH=. pytest -q
+      - name: Verify Android source is present
+        run: test -s ../android/app/src/main/java/com/kinoa/studio/MainActivity.kt
   web:
     runs-on: ubuntu-latest
     steps:
