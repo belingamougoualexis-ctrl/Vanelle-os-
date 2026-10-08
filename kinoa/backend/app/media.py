@@ -45,7 +45,11 @@ def assemble_videos(inputs: list[str | Path], output: str | Path, *, project_roo
     out=Path(output).resolve()
     root=Path(project_root).resolve() if project_root else out.parent.resolve()
     root.mkdir(parents=True, exist_ok=True)
+    if fps < 1 or fps > 120 or width < 16 or height < 16: raise ValueError("Invalid output media parameters")
     files=[_safe_input(Path(p),root) for p in inputs]
+    for p in files:
+        qa=validate_media(p)
+        if not qa["valid"]: raise ValueError(f"Input media failed QA: {p}: {qa["errors"]}")
     if out.parent != root and root not in out.parents: raise ValueError("Output path escapes project directory")
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=root) as td:
