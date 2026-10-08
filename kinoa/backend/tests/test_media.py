@@ -47,3 +47,4 @@ def test_project_audio_assembly_imports_real_mux(tmp_path: Path):
     assert Path(result["output"]).exists()
     assert result["pipeline"]["audio"]=="muxed"
     assert validate_media(result["output"])["valid"] is True
+\n\ndef test_kinoa_original_intro_is_real_media(tmp_path: Path):\n    from app.assembly import create_kinoa_original_intro\n    intro=create_kinoa_original_intro(tmp_path/"kinoa_original.mp4",width=320,height=180,fps=24,duration=0.5)\n    qa=validate_media(intro,expected_fps=24)\n    assert qa["valid"] is True\n    assert qa["duration_seconds"] > 0\n
