@@ -75,6 +75,49 @@ def generation_plan(project_id:str):
     save(p)
     return {"project_id":p.id,"plan":plan.__dict__,"validation":validation,"generation":p.generation}
 
+@app.post("/api/projects/{project_id}/generation/start")
+def generation_start(project_id:str):
+    try: p=load(project_id)
+    except FileNotFoundError: raise HTTPException(404,"Project not found")
+    if not p.screenplay: raise HTTPException(400,"Screenplay is empty")
+    engine=get_video_engine()
+    ready=engine.readiness()
+    if not ready.get("ready"):
+        p.generation.update({"state":"blocked","engine":engine.name,"error":ready.get("reason")})
+        p.checkpoint={"stage":"generation-blocked","reason":ready.get("reason")}
+        save(p)
+        raise HTTPException(503,{"message":"Real video generation unavailable","readiness":ready})
+    p.generation.update({"state":"running","engine":engine.name,"error":None,"total":len(p.screenplay)})
+    save(p)
+    try:
+        for scene in p.screenplay:
+            scene["status"]=SceneStatus.generation.value
+            request_path=ROOT / p.id / "scenes" / f"{scene['scene_id']}.mp4"
+            request_path.parent.mkdir(parents=True,exist_ok=True)
+            # Concrete engine must produce the file; no placeholder is accepted.
+            from .video_engine import GenerationRequest
+            req=GenerationRequest(scene_id=scene["scene_id"],prompt=build_video_prompt(p,scene),
+                                  output_path=request_path,duration_seconds=float(scene["target_duration_seconds"]),
+                                  width=int(p.resolution.split("x")[0]),height=int(p.resolution.split("x")[1]),fps=p.fps)
+            engine.generate(req)
+            if not request_path.is_file() or request_path.stat().st_size==0:
+                raise RuntimeError("Engine returned without a valid video file")
+            p.generation.update({"current_scene":scene["scene_id"]})
+            p.generation["completed"] += 1
+            p.generation["progress"]=round(p.generation["completed"]/len(p.screenplay)*100,2)
+            scene["status"]=SceneStatus.completed.value
+            p.checkpoint={"stage":"scene-completed","scene_id":scene["scene_id"],"completed":p.generation["completed"]}
+            save(p)
+    except Exception as exc:
+        p.generation.update({"state":"error","error":str(exc)})
+        p.checkpoint={"stage":"generation-error","error":str(exc),"completed":p.generation["completed"]}
+        save(p)
+        raise HTTPException(503,{"message":"Generation failed without fabricated output","error":str(exc)})
+    p.generation.update({"state":"completed","current_scene":None,"progress":100.0})
+    p.checkpoint={"stage":"generation-complete","completed":p.generation["completed"]}
+    save(p)
+    return p.generation
+
 @app.get("/api/projects/{project_id}/generation")
 def generation_status(project_id:str):
     try: p=load(project_id)
