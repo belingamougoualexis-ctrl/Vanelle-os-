@@ -65,3 +65,14 @@ def test_generation_plan_and_engine_status():
     engine = client.get("/api/video-engine")
     assert engine.status_code == 200
     assert engine.json()["engine"] == "wan2.2-t2v-a14b"
+
+
+def test_generation_start_fails_closed_without_real_runtime(client):
+    project=client.post("/api/projects",json={"idea":"A real film"}).json()
+    pid=project["id"]
+    client.post(f"/api/projects/{pid}/screenplay",json={"title":"Opening","action":"A character enters","characters":["A"],"location":"Room","target_duration_seconds":2})
+    response=client.post(f"/api/projects/{pid}/generation/start")
+    assert response.status_code in (503,200)
+    state=client.get(f"/api/projects/{pid}/generation").json()
+    if response.status_code==503:
+        assert state["state"]=="blocked"
