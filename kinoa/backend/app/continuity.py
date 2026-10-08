@@ -9,7 +9,7 @@ class ContinuityIssue:
 
 def validate_scene(scene: dict[str, Any], bible: dict[str, Any], previous: dict[str, Any] | None = None) -> list[ContinuityIssue]:
     issues=[]
-    required=("scene_id","characters","location","visual_style","duration_seconds")
+    required=("scene_id","characters","location")
     for key in required:
         if key not in scene:
             issues.append(ContinuityIssue(key,f"Missing continuity field: {key}"))
@@ -17,6 +17,10 @@ def validate_scene(scene: dict[str, Any], bible: dict[str, Any], previous: dict[
         for key in ("visual_style","location"):
             if previous.get(key) and scene.get(key) and scene[key] != previous[key] and not scene.get("transition"):
                 issues.append(ContinuityIssue(key,f"Unexpected change from previous scene: {key}"))
+    if "duration_seconds" not in scene and "target_duration_seconds" not in scene:
+        issues.append(ContinuityIssue("duration_seconds","Missing continuity field: duration_seconds"))
+    if "visual_style" not in scene:
+        issues.append(ContinuityIssue("visual_style","Missing continuity field: visual_style"))
     rules=bible.get("continuity_rules",[])
     for rule in rules:
         if isinstance(rule,str) and rule and rule.lower() not in str(scene).lower():
