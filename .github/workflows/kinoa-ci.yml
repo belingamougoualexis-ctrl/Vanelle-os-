@@ -20,6 +20,8 @@ jobs:
       - run: PYTHONPATH=. pytest -q
       - name: Verify Android source is present
         run: test -s ../android/app/src/main/java/com/kinoa/studio/MainActivity.kt
+      - name: Verify Hugging Face GPU package
+        run: test -s ../spaces/Dockerfile && test -s ../spaces/server.py && test -s ../backend/app/audio.py
   web:
     runs-on: ubuntu-latest
     steps:
