@@ -1,0 +1,44 @@
+name: CineForge AI — Windows x64
+on:
+  push:
+    branches: [cineforge-ai-studio]
+    paths:
+      - 'CineForgeAI/**'
+      - '.github/workflows/cineforge-windows-build.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: CineForgeAI/requirements.txt
+      - name: Install app dependencies
+        run: python -m pip install -r CineForgeAI/requirements.txt pyinstaller
+      - name: Unit tests
+        working-directory: CineForgeAI
+        run: python -m unittest discover -s tests -v
+      - name: Compile source
+        working-directory: CineForgeAI
+        run: python -m compileall -q cineforge engine main.py tests
+      - name: Build Windows executable
+        working-directory: CineForgeAI
+        run: pyinstaller --noconfirm --clean --windowed --name CineForgeAI main.py
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = "CineForgeAI\dist\CineForgeAI\CineForgeAI.exe"
+          if (!(Test-Path $exe)) { throw "CineForgeAI.exe absent" }
+          if ((Get-Item $exe).Length -le 0) { throw "CineForgeAI.exe vide" }
+          Write-Host "Verified $exe ($((Get-Item $exe).Length) bytes)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CineForgeAI-Windows-x64
+          path: CineForgeAI/dist/CineForgeAI/
+          if-no-files-found: error
