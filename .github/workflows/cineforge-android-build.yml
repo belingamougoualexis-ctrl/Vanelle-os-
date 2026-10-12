@@ -1,0 +1,56 @@
+name: CineForge AI Studio — Android APK
+on:
+  push:
+    branches: [cineforge-ai-studio]
+    paths:
+      - 'CineForgeAI/android/**'
+      - '.github/workflows/cineforge-android-build.yml'
+      - 'CineForgeAI/engine/mobile_server.py'
+  pull_request:
+    paths:
+      - 'CineForgeAI/android/**'
+      - '.github/workflows/cineforge-android-build.yml'
+      - 'CineForgeAI/engine/mobile_server.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Validate engine bridge syntax
+        run: python -m py_compile CineForgeAI/engine/mobile_server.py
+
+      - name: Run Android unit tests and assemble APK
+        working-directory: CineForgeAI/android
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineForgeAI-Android-APK
+          path: CineForgeAI/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
