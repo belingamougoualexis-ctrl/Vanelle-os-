@@ -1,0 +1,5 @@
+git+https://github.com/huggingface/diffusers
+transformers>=4.45.0
+accelerate>=1.0.0
+safetensors>=0.4.5
+imageio[ffmpeg]>=2.35.0
