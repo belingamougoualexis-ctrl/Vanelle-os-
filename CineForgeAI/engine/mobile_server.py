@@ -34,7 +34,7 @@ executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cineforge-video
 
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(min_length=12, max_length=2500)
+    prompt: str = Field(min_length=12, max_length=3000)
     seconds: int = Field(default=5, ge=5, le=10)
     width: int = Field(default=768)
     height: int = Field(default=512)
