@@ -6,7 +6,7 @@ echo CineForge AI - moteur video LTX-2.5 pour Android
 echo ================================================
 echo.
 echo Installation des dependances du serveur mobile...
-python -m pip install -r requirements-mobile-server.txt
+python -m pip install -r requirements-video.txt -r requirements-mobile-server.txt
 if errorlevel 1 (
   echo Echec installation serveur. Verifie Python et la connexion Internet.
   pause
